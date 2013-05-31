@@ -60,32 +60,37 @@ class Migrator
       rate_check(100) if total_tickets % 100 == 0
       title = ticket[:summary]
       if @issues.has_key?(title)
-        $logger.warn("skipping already existing issue '#{title}'")
+        $logger.warn("skipping existing issue '#{title}'")
         next
       end
-      opts = {}
-      assignee = translate_username(ticket[:owner])
-      opts[:assignee] = assignee if assignee
-      milestone = @milestones[ticket[:milestone]]
-      opts[:milestone] = milestone if milestone
-      body = markdownify(ticket[:description])
-      body.insert(0, "**Original reporter**: *#{ticket[:reporter]}*\n\n")
-      issue = @gh.create_issue(title, body, opts)
-      @issues[title] = issue
-      # FIXME: Perhaps this label checking is redundant and only makes sense
-      # during replaying of the changes later, but my Trac fu is not enough to
-      # make that call.
-      [:type, :component, :priority, :version, :resolution].each do |category|
-        if labs = translate_labels(issue, category, ticket[category])
-          $logger.debug("issue #{issue[:number]}: adding labels '#{labs}'")
-          @gh.update_issue_opts(issue, :labels => labs)
+      begin
+        opts = {}
+        assignee = translate_username(ticket[:owner])
+        opts[:assignee] = assignee if assignee
+        milestone = @milestones[ticket[:milestone]]
+        opts[:milestone] = milestone if milestone
+        body = markdownify(ticket[:description])
+        body.insert(0, "**Original reporter**: *#{ticket[:reporter]}*\n\n")
+        issue = @gh.create_issue(title, body, opts)
+        @issues[title] = issue
+        # FIXME: Perhaps this label checking is redundant and only makes sense
+        # during replaying of the changes later, but my Trac fu is not enough to
+        # make that call.
+        [:type, :component, :priority, :version, :resolution].each do |category|
+          if labs = translate_labels(issue, category, ticket[category])
+            $logger.debug("issue #{issue[:number]}: adding labels '#{labs}'")
+            @gh.update_issue_opts(issue, :labels => labs)
+          end
         end
+        $logger.debug('replaying ticket history')
+        @trac.changes.where(:ticket => ticket[:id]).each do |change|
+          replay_history(issue, change[:field], change[:newvalue])
+        end
+        $logger.info("migrated ticket #{ticket[:id]} to issue ##{issue[:number]}")
+      rescue Interrupt
+        $logger.error("cancelled migration of ticket #{ticket[:id]} '#{title}'")
+        exit 1
       end
-      $logger.debug('replaying ticket history')
-      @trac.changes.where(:ticket => ticket[:id]).each do |change|
-        replay_history(issue, change[:field], change[:newvalue])
-      end
-      $logger.info("migrated ticket #{ticket[:id]} to issue ##{issue[:number]}")
     end
   end
 
@@ -225,7 +230,11 @@ class GitHub
 
   def list_issues
     $logger.debug('fetching all open issues')
-    fetch_pagewise { |i| @client.list_issues(@repo, :page => i) }
+    open = fetch_pagewise { |i| @client.list_issues(@repo, :page => i) }
+    closed = fetch_pagewise do |i|
+      @client.list_issues(@repo, {:state => 'closed', :page => i})
+    end
+    open + closed
   end
 
   def create_issue(*args)
