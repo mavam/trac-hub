@@ -53,8 +53,7 @@ class Migrator
 
   def migrate_tickets(insert_author = true)
     $logger.info('migrating issues')
-    # We use fuzzy matching via the issue title to determine whether an issue
-    # exists already.
+    # We match the issue title to determine whether an issue exists already.
     ghi = Hash[@gh.list_issues.map { |i| [i[:title], i] }]
     @trac.tickets.each do |t|
       title = t[:summary]
@@ -68,6 +67,7 @@ class Migrator
       opts[:assignee] = assignee if assignee
       milestone = @milestones[t[:milestone]]
       opts[:milestone] = milestone if milestone
+      # TODO: labels
       body = markdownify(t[:description])
       if insert_author
         body.insert(0, "**Original reporter**: *#{t[:reporter]}*\n\n")
@@ -87,7 +87,6 @@ class Migrator
       id = c[:ticket]
       issue = @issues[id]
       no = issue[:number]
-      issue_labels = issue[:labels].map { |l| l[:name] }
       case c[:field]
       when 'milestone'
         ms = @milestones[c[:newvalue]]
@@ -119,29 +118,13 @@ class Migrator
       when 'comment'
         body = c[:newvalue]
         next if body.empty? || body =~ /Milestone.*deleted/
-        excerpt = body[0, 20]
+        excerpt = body[0, 20].gsub("\n", ' ')
         excerpt << '...' if body.size > 20
         $logger.debug("issue #{no}: adding comment '#{excerpt}'")
         @gh.add_comment(no, body)
       when /resolution|priority|component|type|version/
-        group = @labels[c[:field]]
-        next unless group
-        t, f = group.partition { |pat, rep| pat =~ c[:newvalue] }
-        if t.empty?
-          $logger.warn("issue #{no}: no match for #{c[:field]} (#{c[:newvalue]})")
-          next
-        elsif t.size > 1
-          $logger.error("issue #{no}: more than one #{c[:field]} regex matched")
-          exit 1
-        end
-        label = t[0][1]
-        $logger.debug("issue #{no}: adding label '#{label}'")
-        new_labs = issue_labels.reject { |lab| f.find { |pat, rep|  pat =~ lab } }
-        if issue_labels.size != new_labs.size 
-          $logger.debug("issue #{no}: removed existing labels in '#{c[:field]}'")
-        end
-        new_labs << label
-        @gh.update_issue(no, issue[:title], issue[:body], :labels => new_labs)
+        labels = translate_labels(issue, c[:field], c[:newvalue])
+        @gh.update_issue(no, issue[:title], issue[:body], :labels => labels)
       when /keywords|cc|reporter/
         # TODO
       end
@@ -150,6 +133,27 @@ class Migrator
 
   def translate_username(user)
     @users[user]
+  end
+
+  def translate_labels(issue, category, label)
+    i = issue[:number]
+    old_labs = issue[:labels].map { |l| l[:name] }
+    return nil unless @labels.has_key?(category)
+    t, f = @labels[category].partition { |pat, rep| pat =~ label }
+    if t.empty?
+      $logger.warn("issue #{i}: no match for label '#{label}' in '#{category}'")
+      return nil
+    elsif t.size > 1
+      $logger.error("issue #{i}: more than one match for '#{label}' in '#{category}'")
+      exit 1
+    end
+    new_labs = old_labs.reject { |lab| f.find { |pat, rep|  pat =~ lab } }
+    if old_labs.size != new_labs.size
+      $logger.debug("issue #{i}: removed existing labels in '#{c[:field]}'")
+    end
+    new_label = t[0][1]
+    $logger.debug("issue #{i}: adding label '#{new_label}'")
+    new_labs << new_label
   end
 
   # Ripped from https://gist.github.com/somebox/619537
