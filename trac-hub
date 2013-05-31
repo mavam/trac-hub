@@ -121,8 +121,9 @@ class Migrator
       @gh.update_issue(i, issue[:title], body)
     when 'comment'
       return if value.empty? || value =~ /Milestone.*deleted/
-      excerpt = value[0, 20].gsub("\n", ' ')
-      excerpt << '...' if value.size > 20
+      max_len = 30
+      excerpt = value[0, max_len].gsub(/\n|\r/, ' ')
+      excerpt << '...' if value.size > max_len
       $logger.debug("issue #{i}: adding comment '#{excerpt}'")
       @gh.add_comment(i, value)
     when /resolution|priority|component|type|version/
