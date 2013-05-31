@@ -15,26 +15,24 @@ class Migrator
     collaborators = @gh.collaborators.map { |c| c[:login] }
     @users = Hash[users.select { |from,to| collaborators.include?(to) }]
     @labels = Hash[labels.map { |topic, rx| [topic, rx.map { |f, t| [Regexp.new(f), t] }] }]
-    @milestones = {}
-    @issues = {}
+    @milestones = Hash[@gh.list_milestones.map { |m| [m[:title], m[:number]] }]
+    @issues = Hash[@gh.list_issues.map { |i| [i[:title], i] }]
+    @ticket_to_issue = {}
   end
 
   def migrate
     migrate_milestones
     migrate_tickets
-    replay_changes
   end
 
   private
 
   def migrate_milestones
     $logger.info('migrating milestones')
-    ghm = Hash[@gh.list_milestones.map { |m| [m[:title], m] }]
     @trac.milestones.each do |milestone|
-      title = milestone[:name]
-      if ghm.has_key?(title)
-        $logger.warn("skipping already existing milestone '#{title}'")
-        @milestones[title] = ghm[title][:number]
+      name = milestone[:name]
+      if @milestones.has_key?(name)
+        $logger.warn("skipping already existing milestone '#{name}'")
         next
       end
       opts = {}
@@ -46,8 +44,9 @@ class Migrator
       rescue
         $logger.warn("ignoring milestone date '#{milestone[:due]}'")
       end
-      $logger.debug("creating new milestone #{title}")
-      @milestones[title] = @gh.create_milestone(title, opts)[:number]
+      $logger.debug("creating new milestone #{name}")
+      ms = @gh.create_milestone(name, opts)
+      @milestones[name] = ms[:number]
     end
   end
 
@@ -55,15 +54,13 @@ class Migrator
   def migrate_tickets
     $logger.info('migrating issues')
     # We match the issue title to determine whether an issue exists already.
-    ghi = Hash[@gh.list_issues.map { |i| [i[:title], i] }]
     total_tickets = @trac.tickets.count
     @trac.tickets.each do |ticket|
       total_tickets -= 1
       rate_check(100) if total_tickets % 100 == 0
       title = ticket[:summary]
-      if ghi.has_key?(title)
+      if @issues.has_key?(title)
         $logger.warn("skipping already existing issue '#{title}'")
-        @issues[ticket[:id]] = ghi[title]
         next
       end
       opts = {}
@@ -83,63 +80,57 @@ class Migrator
           @gh.update_issue_opts(issue, :labels => labs)
         end
       end
-      ghi[title] = issue # Avoid adding issues having duplicate title.
-      @issues[ticket[:id]] = issue
+      @issues[title] = issue
+      $logger.info('replaying ticket timeline')
+      @trac.changes.where(:ticket => ticket[:id]).each do |change|
+        replay_changes(issue, change[:field], change[:newvalue])
+      end
     end
   end
 
   # Replays the ticket timeline (comments and status changes) to the existing
   # tickets.
-  def replay_changes
-    $logger.info('replaying ticket timeline')
-    progress = Hash.new(0)
-    total_ops = @trac.changes.count
-    @trac.changes.order(:ticket).each do |c|
-      total_ops -= 1
-      rate_check(100) if total_ops % 100 == 0
-      issue = @issues[c[:ticket]]
-      i = issue[:number]
-      case c[:field]
-      when 'milestone'
-        ms = @milestones[c[:newvalue]]
-        $logger.debug("issue #{i}: updating milestone to '#{ms}'")
-        @gh.update_issue(i, issue[:title], issue[:body], :milestone => ms)
-      when 'owner'
-        if user = translate_username(c[:newvalue])
-          $logger.debug("issue #{i}: updating assignee to '#{user}'")
-          opts = {:assignee => user}
-          @gh.update_issue(i, issue[:title], issue[:body], opts)
-        end
-      when 'status'
-        case c[:newvalue]
-        when 'closed'
-          $logger.debug("issue #{i}: closing")
-          @gh.close_issue(i)
-        when 'reopened'
-          $logger.debug("issue #{i}: reopening")
-          @gh.reopen_issue(i)
-        end
-      when 'summary'
-        $logger.debug("issue #{i}: updating title to '#{c[:newvalue]}'")
-        @gh.update_issue(i, c[:newvalue], issue[:body])
-      when 'description'
-        $logger.debug("issue #{i}: updating body")
-        reporter = issue.body.split("\n\n", 1)[0]
-        body = [reporter, c[:newvalue]].join("\n\n")
-        @gh.update_issue(i, issue[:title], body)
-      when 'comment'
-        body = c[:newvalue]
-        next if body.empty? || body =~ /Milestone.*deleted/
-        excerpt = body[0, 20].gsub("\n", ' ')
-        excerpt << '...' if body.size > 20
-        $logger.debug("issue #{i}: adding comment '#{excerpt}'")
-        @gh.add_comment(i, body)
-      when /resolution|priority|component|type|version/
-        labels = translate_labels(issue, c[:field], c[:newvalue])
-        @gh.update_issue_opts(issue, :labels => labs)
-      when /keywords|cc|reporter/
-        # TODO
+  def replay_changes(issue, category, value)
+    i = issue[:number]
+    case category
+    when 'milestone'
+      ms = @milestones[value]
+      $logger.debug("issue #{i}: updating milestone to '#{ms}'")
+      @gh.update_issue(i, issue[:title], issue[:body], :milestone => ms)
+    when 'owner'
+      if user = translate_username(value)
+        $logger.debug("issue #{i}: updating assignee to '#{user}'")
+        opts = {:assignee => user}
+        @gh.update_issue(i, issue[:title], issue[:body], opts)
       end
+    when 'status'
+      case value
+      when 'closed'
+        $logger.debug("issue #{i}: closing")
+        @gh.close_issue(i)
+      when 'reopened'
+        $logger.debug("issue #{i}: reopening")
+        @gh.reopen_issue(i)
+      end
+    when 'summary'
+      $logger.debug("issue #{i}: updating title to '#{value}'")
+      @gh.update_issue(i, value, issue[:body])
+    when 'description'
+      $logger.debug("issue #{i}: updating body")
+      reporter = issue.body.split("\n\n", 1)[0]
+      body = [reporter, value].join("\n\n")
+      @gh.update_issue(i, issue[:title], body)
+    when 'comment'
+      return if value.empty? || value =~ /Milestone.*deleted/
+      excerpt = value[0, 20].gsub("\n", ' ')
+      excerpt << '...' if value.size > 20
+      $logger.debug("issue #{i}: adding comment '#{excerpt}'")
+      @gh.add_comment(i, value)
+    when /resolution|priority|component|type|version/
+      labels = translate_labels(issue, category, value)
+      @gh.update_issue_opts(issue, :labels => labels)
+    when /keywords|cc|reporter/
+      # TODO
     end
   end
 
@@ -171,7 +162,7 @@ class Migrator
     end
     new_labs = old_labs.reject { |lab| f.find { |pat, rep|  pat =~ lab } }
     if old_labs.size != new_labs.size
-      $logger.debug("issue #{i}: removed existing labels in '#{c[:field]}'")
+      $logger.debug("issue #{i}: removed existing labels in '#{category}'")
     end
     new_label = t[0][1]
     $logger.debug("issue #{i}: adding label '#{new_label}'")
@@ -235,7 +226,7 @@ class GitHub
     open = fetch_pagewise { |i| @client.list_issues(@repo, :page => i) }
     $logger.debug('fetching all closed issues')
     closed = fetch_pagewise do |i|
-      @client.list_issues(@repo, {:page => i, :status => 'closed'})
+      @client.list_issues(@repo, {:status => 'closed', :page => i})
     end
     open + closed
   end
