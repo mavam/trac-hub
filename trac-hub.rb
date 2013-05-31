@@ -8,19 +8,20 @@ require 'sequel'
 require 'yaml'
 
 class Migrator
-  def initialize(trac, github, usermap)
+  def initialize(trac, github, users, labels)
     @trac = trac
     @gh = github
     # Only collaborators are viable assignees.
     collaborators = @gh.collaborators.map { |c| c[:login] }
-    @usermap = usermap.select { |from,to| collaborators.include?(to) }
+    @users = Hash[users.select { |from,to| collaborators.include?(to) }]
+    @labels = Hash[labels.map { |topic, rx| [topic, rx.map { |f, t| [Regexp.new(f), t] }] }]
     @milestones = {}
     @issues = {}
   end
 
   def migrate
-    #migrate_milestones
-    #migrate_tickets
+    migrate_milestones
+    migrate_tickets
     replay_changes
   end
 
@@ -51,7 +52,7 @@ class Migrator
   end
 
   def migrate_tickets(insert_author = true)
-    $logger.info('creating tickets')
+    $logger.info('migrating issues')
     # We use fuzzy matching via the issue title to determine whether an issue
     # exists already.
     ghi = Hash[@gh.list_issues.map { |i| [i[:title], i] }]
@@ -59,7 +60,7 @@ class Migrator
       title = t[:summary]
       if ghi.has_key?(title)
         $logger.warn("skipping already existing issue '#{title}'")
-        @issues[t[:id]] = ghi[title][:number]
+        @issues[t[:id]] = ghi[title]
         next
       end
       opts = {}
@@ -73,19 +74,82 @@ class Migrator
       end
       issue = @gh.create_issue(title, body, opts)
       ghi[title] = issue # Avoid adding issues having duplicate title.
-      @issues[t[:id]] = issue[:number]
+      @issues[t[:id]] = issue
     end
   end
 
   def replay_changes
     $logger.info('replaying ticket changes')
-    @trac.changes.group(:ticket).each do |c|
-      #TODO
+    # FIXME: I cannot figure out how to get group(:ticket) working, it only
+    # returns the first change of a given ticket as opposed to the whole group
+    # of changes. Hence the weird loop thingy.
+    @trac.changes.order(:ticket).each do |c|
+      id = c[:ticket]
+      issue = @issues[id]
+      no = issue[:number]
+      issue_labels = issue[:labels].map { |l| l[:name] }
+      case c[:field]
+      when 'milestone'
+        ms = @milestones[c[:newvalue]]
+        $logger.debug("issue #{no}: updating milestone to '#{ms}'")
+        @gh.update_issue(no, issue[:title], issue[:body], :milestone => ms)
+      when 'owner'
+        if user = translate_username(c[:newvalue])
+          $logger.debug("issue #{no}: updating assignee to '#{user}'")
+          opts = {:assignee => user}
+          @gh.update_issue(no, issue[:title], issue[:body], opts)
+        end
+      when 'status'
+        case c[:newvalue]
+        when 'closed'
+          $logger.debug("issue #{no}: closing")
+          @gh.close_issue(no)
+        when 'reopened'
+          $logger.debug("issue #{no}: reopening")
+          @gh.reopen_issue(no)
+        end
+      when 'summary'
+        $logger.debug("issue #{no}: updating title to '#{c[:newvalue]}'")
+        @gh.update_issue(no, c[:newvalue], issue[:body])
+      when 'description'
+        $logger.debug("issue #{no}: updating body")
+        reporter = issue.body.split("\n\n", 1)[0]
+        body = [reporter, c[:newvalue]].join("\n\n")
+        @gh.update_issue(no, issue[:title], body)
+      when 'comment'
+        body = c[:newvalue]
+        next if body.empty? || body =~ /Milestone.*deleted/
+        excerpt = body[0, 20]
+        excerpt << '...' if body.size > 20
+        $logger.debug("issue #{no}: adding comment '#{excerpt}'")
+        @gh.add_comment(no, body)
+      when /resolution|priority|component|type|version/
+        group = @labels[c[:field]]
+        next unless group
+        t, f = group.partition { |pat, rep| pat =~ c[:newvalue] }
+        if t.empty?
+          $logger.warn("issue #{no}: no match for #{c[:field]} (#{c[:newvalue]})")
+          next
+        elsif t.size > 1
+          $logger.error("issue #{no}: more than one #{c[:field]} regex matched")
+          exit 1
+        end
+        label = t[0][1]
+        $logger.debug("issue #{no}: adding label '#{label}'")
+        new_labs = issue_labels.reject { |lab| f.find { |pat, rep|  pat =~ lab } }
+        if issue_labels.size != new_labs.size 
+          $logger.debug("issue #{no}: removed existing labels in '#{c[:field]}'")
+        end
+        new_labs << label
+        @gh.update_issue(no, issue[:title], issue[:body], :labels => new_labs)
+      when /keywords|cc|reporter/
+        # TODO
+      end
     end
   end
 
   def translate_username(user)
-    @usermap[user]
+    @users[user]
   end
 
   # Ripped from https://gist.github.com/somebox/619537
@@ -155,6 +219,18 @@ class GitHub
 
   def update_issue(*args)
     @client.update_issue(@repo, *args)
+  end
+
+  def close_issue(*args)
+    @client.close_issue(@repo, *args)
+  end
+
+  def reopen_issue(*args)
+    @client.reopen_issue(@repo, *args)
+  end
+
+  def add_comment(*args)
+    @client.add_comment(@repo, *args)
   end
 
   private
@@ -234,6 +310,6 @@ if __FILE__ == $0
   trac = Trac.new(db)
   gh = cfg['github']
   github = GitHub.new(gh['user'], gh['pass'], gh['repo'])
-  migrator = Migrator.new(trac, github, Hash[cfg['usermap']])
+  migrator = Migrator.new(trac, github, cfg['users'], cfg['labels'])
   migrator.migrate
 end
