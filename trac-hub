@@ -231,8 +231,13 @@ class GitHub
   end
 
   def list_issues
-    $logger.debug('fetching all issues')
-    fetch { |i| @client.list_issues(@repo, :page => i) }
+    $logger.debug('fetching all open issues')
+    open = fetch_pagewise { |i| @client.list_issues(@repo, :page => i) }
+    $logger.debug('fetching all closed issues')
+    closed = fetch_pagewise do |i|
+      @client.list_issues(@repo, {:page => i, :status => 'closed'})
+    end
+    open + closed
   end
 
   def create_issue(*args)
@@ -271,7 +276,7 @@ class GitHub
 
   private
 
-  def fetch
+  def fetch_pagewise
     result = []
     begin
       i = 1;
