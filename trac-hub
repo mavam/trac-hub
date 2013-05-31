@@ -51,6 +51,7 @@ class Migrator
     end
   end
 
+  # Creates github issues for trac tickets.
   def migrate_tickets
     $logger.info('migrating issues')
     # We match the issue title to determine whether an issue exists already.
@@ -76,7 +77,7 @@ class Migrator
       [:type, :component, :priority, :version, :resolution].each do |category|
         if labs = translate_labels(issue, category, ticket[category])
           $logger.debug("issue #{issue[:number]}: adding labels '#{labs}'")
-          @gh.label_issue(issue, labs)
+          @gh.update_issue_opts(issue, :labels => labs)
         end
       end
       @gh.close_issue(issue[:number]) if ticket[:status] == 'closed'
@@ -85,53 +86,52 @@ class Migrator
     end
   end
 
+  # Replays the ticket timeline (comments and status changes) to the existing
+  # tickets.
   def replay_changes
-    $logger.info('replaying ticket changes')
-    # FIXME: I cannot figure out how to get group(:ticket) working, it only
-    # returns the first change of a given ticket as opposed to the whole group
-    # of changes. Hence the weird loop thingy.
+    $logger.info('replaying ticket timeline')
+    progress = Hash.new(0)
     @trac.changes.order(:ticket).each do |c|
-      id = c[:ticket]
-      issue = @issues[id]
-      no = issue[:number]
+      issue = @issues[c[:ticket]]
+      i = issue[:number]
       case c[:field]
       when 'milestone'
         ms = @milestones[c[:newvalue]]
-        $logger.debug("issue #{no}: updating milestone to '#{ms}'")
-        @gh.update_issue(no, issue[:title], issue[:body], :milestone => ms)
+        $logger.debug("issue #{i}: updating milestone to '#{ms}'")
+        @gh.update_issue(i, issue[:title], issue[:body], :milestone => ms)
       when 'owner'
         if user = translate_username(c[:newvalue])
-          $logger.debug("issue #{no}: updating assignee to '#{user}'")
+          $logger.debug("issue #{i}: updating assignee to '#{user}'")
           opts = {:assignee => user}
-          @gh.update_issue(no, issue[:title], issue[:body], opts)
+          @gh.update_issue(i, issue[:title], issue[:body], opts)
         end
       when 'status'
         case c[:newvalue]
         when 'closed'
-          $logger.debug("issue #{no}: closing")
-          @gh.close_issue(no)
+          $logger.debug("issue #{i}: closing")
+          @gh.close_issue(i)
         when 'reopened'
-          $logger.debug("issue #{no}: reopening")
-          @gh.reopen_issue(no)
+          $logger.debug("issue #{i}: reopening")
+          @gh.reopen_issue(i)
         end
       when 'summary'
-        $logger.debug("issue #{no}: updating title to '#{c[:newvalue]}'")
-        @gh.update_issue(no, c[:newvalue], issue[:body])
+        $logger.debug("issue #{i}: updating title to '#{c[:newvalue]}'")
+        @gh.update_issue(i, c[:newvalue], issue[:body])
       when 'description'
-        $logger.debug("issue #{no}: updating body")
+        $logger.debug("issue #{i}: updating body")
         reporter = issue.body.split("\n\n", 1)[0]
         body = [reporter, c[:newvalue]].join("\n\n")
-        @gh.update_issue(no, issue[:title], body)
+        @gh.update_issue(i, issue[:title], body)
       when 'comment'
         body = c[:newvalue]
         next if body.empty? || body =~ /Milestone.*deleted/
         excerpt = body[0, 20].gsub("\n", ' ')
         excerpt << '...' if body.size > 20
-        $logger.debug("issue #{no}: adding comment '#{excerpt}'")
-        @gh.add_comment(no, body)
+        $logger.debug("issue #{i}: adding comment '#{excerpt}'")
+        @gh.add_comment(i, body)
       when /resolution|priority|component|type|version/
         labels = translate_labels(issue, c[:field], c[:newvalue])
-        @gh.label_issue(issue, labels)
+        @gh.update_issue_opts(issue, :labels => labs)
       when /keywords|cc|reporter/
         # TODO
       end
@@ -244,8 +244,7 @@ class GitHub
     @client.add_comment(@repo, *args)
   end
 
-  def label_issue(issue, labels)
-    opts = { :labels => labels }
+  def update_issue_opts(issue, opts)
     update_issue(issue[:number], issue[:title], issue[:body], opts)
   end
 
