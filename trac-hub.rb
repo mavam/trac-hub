@@ -51,30 +51,37 @@ class Migrator
     end
   end
 
-  def migrate_tickets(insert_author = true)
+  def migrate_tickets
     $logger.info('migrating issues')
     # We match the issue title to determine whether an issue exists already.
     ghi = Hash[@gh.list_issues.map { |i| [i[:title], i] }]
-    @trac.tickets.each do |t|
-      title = t[:summary]
+    @trac.tickets.each do |ticket|
+      title = ticket[:summary]
       if ghi.has_key?(title)
         $logger.warn("skipping already existing issue '#{title}'")
-        @issues[t[:id]] = ghi[title]
+        @issues[ticket[:id]] = ghi[title]
         next
       end
       opts = {}
-      assignee = translate_username(t[:owner])
+      assignee = translate_username(ticket[:owner])
       opts[:assignee] = assignee if assignee
-      milestone = @milestones[t[:milestone]]
+      milestone = @milestones[ticket[:milestone]]
       opts[:milestone] = milestone if milestone
-      # TODO: labels
-      body = markdownify(t[:description])
-      if insert_author
-        body.insert(0, "**Original reporter**: *#{t[:reporter]}*\n\n")
-      end
+      body = markdownify(ticket[:description])
+      body.insert(0, "**Original reporter**: *#{ticket[:reporter]}*\n\n")
       issue = @gh.create_issue(title, body, opts)
+      # FIXME: Perhaps this label checking is redundant and only makes sense
+      # during replaying of the changes later, but my Trac fu is not enough to
+      # make that call.
+      [:type, :component, :priority, :version, :resolution].each do |category|
+        if labs = translate_labels(issue, category, ticket[category])
+          $logger.debug("issue #{issue[:number]}: adding labels '#{labs}'")
+          @gh.label_issue(issue, labs)
+        end
+      end
+      @gh.close_issue(issue[:number]) if ticket[:status] == 'closed'
       ghi[title] = issue # Avoid adding issues having duplicate title.
-      @issues[t[:id]] = issue
+      @issues[ticket[:id]] = issue
     end
   end
 
@@ -124,7 +131,7 @@ class Migrator
         @gh.add_comment(no, body)
       when /resolution|priority|component|type|version/
         labels = translate_labels(issue, c[:field], c[:newvalue])
-        @gh.update_issue(no, issue[:title], issue[:body], :labels => labels)
+        @gh.label_issue(issue, labels)
       when /keywords|cc|reporter/
         # TODO
       end
@@ -235,6 +242,11 @@ class GitHub
 
   def add_comment(*args)
     @client.add_comment(@repo, *args)
+  end
+
+  def label_issue(issue, labels)
+    opts = { :labels => labels }
+    update_issue(issue[:number], issue[:title], issue[:body], opts)
   end
 
   private
