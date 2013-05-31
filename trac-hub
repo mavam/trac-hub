@@ -83,7 +83,6 @@ class Migrator
           @gh.update_issue_opts(issue, :labels => labs)
         end
       end
-      @gh.close_issue(issue[:number]) if ticket[:status] == 'closed'
       ghi[title] = issue # Avoid adding issues having duplicate title.
       @issues[ticket[:id]] = issue
     end
@@ -149,7 +148,7 @@ class Migrator
     limit, remaining = @gh.rate_limit
     $logger.debug("#{remaining}/#{limit} operations available")
     while remaining < bound
-      $logger.warn("less then #{bound} operations viable, sleeping...")
+      $logger.info("less than #{bound} operations viable, sleeping...")
       sleep(seconds)
     end
   end
