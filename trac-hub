@@ -59,7 +59,7 @@ class Migrator
     total_tickets = @trac.tickets.count
     @trac.tickets.each do |ticket|
       total_tickets -= 1
-      rate_check(100, 10) if total_tickets % 100 == 0
+      rate_check(100) if total_tickets % 100 == 0
       title = ticket[:summary]
       if ghi.has_key?(title)
         $logger.warn("skipping already existing issue '#{title}'")
@@ -96,7 +96,7 @@ class Migrator
     total_ops = @trac.changes.count
     @trac.changes.order(:ticket).each do |c|
       total_ops -= 1
-      rate_check(100, 10) if total_ops % 100 == 0
+      rate_check(100) if total_ops % 100 == 0
       issue = @issues[c[:ticket]]
       i = issue[:number]
       case c[:field]
@@ -144,7 +144,7 @@ class Migrator
   end
 
 
-  def rate_check(bound, seconds)
+  def rate_check(bound, seconds=30)
     limit, remaining = @gh.rate_limit
     $logger.debug("#{remaining}/#{limit} operations available")
     while remaining < bound
