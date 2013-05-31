@@ -30,24 +30,24 @@ class Migrator
   def migrate_milestones
     $logger.info('migrating milestones')
     ghm = Hash[@gh.list_milestones.map { |m| [m[:title], m] }]
-    @trac.milestones.each do |m|
-      title = m[:name]
+    @trac.milestones.each do |milestone|
+      title = milestone[:name]
       if ghm.has_key?(title)
         $logger.warn("skipping already existing milestone '#{title}'")
         @milestones[title] = ghm[title][:number]
         next
       end
       opts = {}
-      opts[:state] = m[:completed] == 0 ? 'open' : 'closed'
-      opts[:description] = m[:description]
+      opts[:state] = milestone[:completed] == 0 ? 'open' : 'closed'
+      opts[:description] = milestone[:description]
       begin
-        t = DateTime.parse(m[:due])
+        t = DateTime.parse(milestone[:due])
         opts[:due_on] = t.to_time
       rescue
-        $logger.warn("ignoring unparseable trac milestone date '#{m[:due]}'")
+        $logger.warn("ignoring milestone date '#{milestone[:due]}'")
       end
-      milestone = @gh.create_milestone(title, opts)
-      @milestones[title] = milestone[:number]
+      $logger.debug("creating new milestone #{title}")
+      @milestones[title] = @gh.create_milestone(title, opts)[:number]
     end
   end
 
@@ -56,7 +56,10 @@ class Migrator
     $logger.info('migrating issues')
     # We match the issue title to determine whether an issue exists already.
     ghi = Hash[@gh.list_issues.map { |i| [i[:title], i] }]
+    total_tickets = @trac.tickets.count
     @trac.tickets.each do |ticket|
+      total_tickets -= 1
+      rate_check(100, 10) if total_tickets % 100 == 0
       title = ticket[:summary]
       if ghi.has_key?(title)
         $logger.warn("skipping already existing issue '#{title}'")
@@ -91,7 +94,10 @@ class Migrator
   def replay_changes
     $logger.info('replaying ticket timeline')
     progress = Hash.new(0)
+    total_ops = @trac.changes.count
     @trac.changes.order(:ticket).each do |c|
+      total_ops -= 1
+      rate_check(100, 10) if total_ops % 100 == 0
       issue = @issues[c[:ticket]]
       i = issue[:number]
       case c[:field]
@@ -135,6 +141,16 @@ class Migrator
       when /keywords|cc|reporter/
         # TODO
       end
+    end
+  end
+
+
+  def rate_check(bound, seconds)
+    limit, remaining = @gh.rate_limit
+    $logger.debug("#{remaining}/#{limit} operations available")
+    while remaining < bound
+      $logger.warn("less then #{bound} operations viable, sleeping...")
+      sleep(seconds)
     end
   end
 
@@ -206,7 +222,9 @@ class GitHub
   end
 
   def list_milestones
-    @client.list_milestones(@repo)
+    open = @client.list_milestones(@repo, :state => 'open')
+    closed = @client.list_milestones(@repo, :state => 'closed')
+    open + closed
   end
 
   def create_milestone(*args)
@@ -246,6 +264,10 @@ class GitHub
 
   def update_issue_opts(issue, opts)
     update_issue(issue[:number], issue[:title], issue[:body], opts)
+  end
+
+  def rate_limit
+    [@client.rate_limit, @client.rate_limit_remaining]
   end
 
   private
