@@ -310,7 +310,11 @@ class Options < Hash
       end
       begin
         opts.parse!(argv)
-        raise 'missing configuration file' unless self[:config]
+        if not self[:config]
+          default = File.join(File.dirname(__FILE__), 'config.yaml')
+          raise 'missing configuration file' unless File.exists?(default)
+          self[:config] = default
+        end
         self[:start] = 0 unless self[:start]
       rescue => e
         STDERR.puts(e)

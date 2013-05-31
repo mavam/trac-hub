@@ -3,27 +3,38 @@ trac-hub
 
 **trac-hub** converts [trac](http://trac.edgewall.org/) tickets into github
 issues. To this end, it accesses trac's underlying database and copies over
-milestones, creates tickets, and finally replays the change history of each
-individual ticket.
+milestones, creates tickets, and replays the change history of each ticket.
 
 Synopsis
 --------
 
-Let's consider `user/test` the test repository for this example. Copy the
-[example YAML configuration](config.yaml.example) and adapt it as needed:
+Copy the [example YAML configuration](config.yaml.example) and adapt it as
+needed:
 
     cp config.yaml.example config.yaml
     vim config.yaml
 
-Thereafter simply run `trac-hub` with the YAML config as follows:
+Thereafter just invoke `trac-hub`:
 
-    ./trac-hub -c config.yaml
+    ./trac-hub
 
-You can also add the `-v` flag for more verbose output.
+By default, trac-hub assumes the file `config.yaml` in the same directory as
+the script. You can also specify the configuration file on the command line:
 
-**Note**: when converting your trac setup to github, it is prudent to first try the
-migration into a test repository, and if this worked out fine, then
-parameterize the script to point to the real repository.
+    ./trac-hub -c foo.yaml
+
+Add the `-v` flag for more verbose output:
+
+    ./trac-hub -v
+
+To resume the migration at a given trac ticket ID, use `-s`:
+
+    ./trac-hub -s 42
+
+*Note*: when converting your trac setup to github, it is prudent to first try
+the migration into a test repository which you can delete afterwards. If this
+worked out fine and delivered the expected results, one can still aim the
+script at the real repository.
 
 Configuration
 -------------
