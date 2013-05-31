@@ -20,9 +20,9 @@ class Migrator
     @ticket_to_issue = {}
   end
 
-  def migrate
+  def migrate(start_ticket = 0)
     migrate_milestones
-    migrate_tickets
+    migrate_tickets(start_ticket)
   end
 
   private
@@ -51,11 +51,11 @@ class Migrator
   end
 
   # Creates github issues for trac tickets.
-  def migrate_tickets
+  def migrate_tickets(start_ticket)
     $logger.info('migrating issues')
     # We match the issue title to determine whether an issue exists already.
     total_tickets = @trac.tickets.count
-    @trac.tickets.each do |ticket|
+    @trac.tickets.order(:id).where{id >= start_ticket}.each do |ticket|
       total_tickets -= 1
       rate_check(100) if total_tickets % 100 == 0
       title = ticket[:summary]
@@ -71,6 +71,7 @@ class Migrator
       body = markdownify(ticket[:description])
       body.insert(0, "**Original reporter**: *#{ticket[:reporter]}*\n\n")
       issue = @gh.create_issue(title, body, opts)
+      @issues[title] = issue
       # FIXME: Perhaps this label checking is redundant and only makes sense
       # during replaying of the changes later, but my Trac fu is not enough to
       # make that call.
@@ -80,28 +81,26 @@ class Migrator
           @gh.update_issue_opts(issue, :labels => labs)
         end
       end
-      @issues[title] = issue
-      $logger.info('replaying ticket timeline')
+      $logger.debug('replaying ticket history')
       @trac.changes.where(:ticket => ticket[:id]).each do |change|
-        replay_changes(issue, change[:field], change[:newvalue])
+        replay_history(issue, change[:field], change[:newvalue])
       end
+      $logger.info("migrated ticket #{ticket[:id]} to issue ##{issue[:number]}")
     end
   end
 
-  # Replays the ticket timeline (comments and status changes) to the existing
-  # tickets.
-  def replay_changes(issue, category, value)
+  # Replays the ticket history of a given ticket.
+  def replay_history(issue, category, value)
     i = issue[:number]
     case category
     when 'milestone'
       ms = @milestones[value]
       $logger.debug("issue #{i}: updating milestone to '#{ms}'")
-      @gh.update_issue(i, issue[:title], issue[:body], :milestone => ms)
+      @gh.update_issue_opts(issue, :milestone => ms)
     when 'owner'
       if user = translate_username(value)
         $logger.debug("issue #{i}: updating assignee to '#{user}'")
-        opts = {:assignee => user}
-        @gh.update_issue(i, issue[:title], issue[:body], opts)
+        @gh.update_issue_opts(issue, :assignee => user)
       end
     when 'status'
       case value
@@ -148,6 +147,8 @@ class Migrator
     @users[user]
   end
 
+  # Adds one given label from a predefined category and removes all other
+  # labels from that category.
   def translate_labels(issue, category, label)
     i = issue[:number]
     old_labs = issue[:labels].map { |l| l[:name] }
@@ -223,12 +224,7 @@ class GitHub
 
   def list_issues
     $logger.debug('fetching all open issues')
-    open = fetch_pagewise { |i| @client.list_issues(@repo, :page => i) }
-    $logger.debug('fetching all closed issues')
-    closed = fetch_pagewise do |i|
-      @client.list_issues(@repo, {:status => 'closed', :page => i})
-    end
-    open + closed
+    fetch_pagewise { |i| @client.list_issues(@repo, :page => i) }
   end
 
   def create_issue(*args)
@@ -296,12 +292,16 @@ class Options < Hash
         puts(opts)
         exit
       end
+      opts.on('-s', '--start-at ID', 'be verbose') do |id|
+        self[:start] = id
+      end
       opts.on('-v', '--verbose', 'be verbose') do |v|
         self[:verbose] = v
       end
       begin
         opts.parse!(argv)
         raise 'missing configuration file' unless self[:config]
+        self[:start] = 0 unless self[:start]
       rescue => e
         STDERR.puts(e)
         STDERR.puts('run with -h to see available options')
@@ -343,5 +343,5 @@ if __FILE__ == $0
   gh = cfg['github']
   github = GitHub.new(gh['user'], gh['pass'], gh['repo'])
   migrator = Migrator.new(trac, github, cfg['users'], cfg['labels'])
-  migrator.migrate
+  migrator.migrate(opts[:start])
 end
