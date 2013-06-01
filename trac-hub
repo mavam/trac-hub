@@ -55,7 +55,7 @@ class Migrator
     $logger.info('migrating issues')
     # We match the issue title to determine whether an issue exists already.
     total_tickets = @trac.tickets.count
-    @trac.tickets.order(:id).where{id >= start_ticket}.each do |ticket|
+    @trac.tickets.order(:id).where{id >= start_ticket}.all.each do |ticket|
       total_tickets -= 1
       rate_check(100) if total_tickets % 100 == 0
       title = ticket[:summary]
