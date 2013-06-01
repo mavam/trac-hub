@@ -44,7 +44,7 @@ class Migrator
       rescue
         $logger.warn("ignoring milestone date '#{milestone[:due]}'")
       end
-      $logger.debug("creating new milestone #{name}")
+      $logger.info("creating new milestone #{name}")
       ms = @gh.create_milestone(name, opts)
       @milestones[name] = ms[:number]
     end
@@ -70,7 +70,7 @@ class Migrator
         milestone = @milestones[ticket[:milestone]]
         opts[:milestone] = milestone if milestone
         body = markdownify(ticket[:description])
-        body.insert(0, "**Original reporter**: *#{ticket[:reporter]}*\n\n")
+        prepend_author(ticket[:reporter], body)
         issue = @gh.create_issue(title, body, opts)
         @issues[title] = issue
         # FIXME: Perhaps this label checking is redundant and only makes sense
@@ -83,8 +83,8 @@ class Migrator
           end
         end
         $logger.debug('replaying ticket history')
-        @trac.changes.where(:ticket => ticket[:id]).each do |change|
-          replay_history(issue, change[:field], change[:newvalue])
+        @trac.changes.where(:ticket => ticket[:id]).each do |chg|
+          replay_history(issue, chg[:author], chg[:field], chg[:newvalue])
         end
         $logger.info("migrated ticket #{ticket[:id]} to issue ##{issue[:number]}")
       rescue Interrupt
@@ -95,7 +95,7 @@ class Migrator
   end
 
   # Replays the ticket history of a given ticket.
-  def replay_history(issue, category, value)
+  def replay_history(issue, author, category, value)
     i = issue[:number]
     case category
     when 'milestone'
@@ -130,7 +130,7 @@ class Migrator
       excerpt = value[0, max_len].gsub(/\n|\r/, ' ')
       excerpt << '...' if value.size > max_len
       $logger.debug("issue #{i}: adding comment '#{excerpt}'")
-      @gh.add_comment(i, value)
+      @gh.add_comment(i, prepend_author(author, markdownify(value)))
     when /resolution|priority|component|type|version/
       labels = translate_labels(issue, category, value)
       @gh.update_issue_opts(issue, :labels => labels)
@@ -139,6 +139,9 @@ class Migrator
     end
   end
 
+  def prepend_author(author, content)
+    content.insert(0, "**Original reporter**: *#{author}*\n\n")
+  end
 
   def rate_check(bound, seconds=30)
     limit, remaining = @gh.rate_limit
@@ -176,22 +179,24 @@ class Migrator
     new_labs << new_label
   end
 
-  # Ripped from https://gist.github.com/somebox/619537
   def markdownify(str)
+    # Code
     str.gsub!(/\{\{\{([^\n]+?)\}\}\}/, '`\1`')
-    str.gsub!(/\{\{\{(.+?)\}\}\}/m) do |m|
-      m.each_line.map {|x| "\t#{x}".gsub(/[\{\}]{3}/,'') }.join
-    end
-    str.gsub!(/\=\=\=\=\s(.+?)\s\=\=\=\=/, '### \1')
-    str.gsub!(/\=\=\=\s(.+?)\s\=\=\=/, '## \1')
-    str.gsub!(/\=\=\s(.+?)\s\=\=/, '# \1')
-    str.gsub!(/\=\s(.+?)\s\=[\s\n]*/, '')
+    str.gsub!(/\{\{\{(.+?)\}\}\}/m, '```\1```')
+    # Headings
+    str.gsub!(/\=\=\=\=\s(.+?)\s\=\=\=\=/, '#### \1')
+    str.gsub!(/\=\=\=\s(.+?)\s\=\=\=/, '### \1')
+    str.gsub!(/\=\=\s(.+?)\s\=\=/, '## \1')
+    str.gsub!(/\=\s(.+?)\s\=[\s\n]*/, '# \1')
+    # Links
     str.gsub!(/\[(http[^\s\[\]]+)\s([^\[\]]+)\]/, '[\2](\1)')
     str.gsub!(/\!(([A-Z][a-z0-9]+){2,})/, '\1')
-    str.gsub!(/'''(.+)'''/, '*\1*')
-    str.gsub!(/''(.+)''/, '_\1_')
-    str.gsub!(/^\s\*/, '*')
-    str.gsub!(/^\s\d\./, '1.')
+    # Font styles
+    str.gsub!(/'''(.+?)'''/, '**\1**')
+    str.gsub!(/''(.+?)''/, '*\1*')
+    # Lists
+    str.gsub!(/(^\s+)\*/, '\1-')
+    str.gsub!(/(^\s+)(\d)\./, '\1\2.')
     str
   end
 end
