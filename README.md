@@ -31,6 +31,11 @@ To resume the migration at a given trac ticket ID, use `-s`:
 
     ./trac-hub -s 42
 
+One can also avoid migration of tickets whose title exists already in the
+github issue tracker:
+
+    ./trac-hub -d
+
 *Note*: when converting your trac setup to github, it is prudent to first try
 the migration into a test repository which you can delete afterwards. If this
 worked out fine and delivered the expected results, one can still aim the

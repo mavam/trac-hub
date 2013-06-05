@@ -8,7 +8,7 @@ require 'sequel'
 require 'yaml'
 
 class Migrator
-  def initialize(trac, github, users, labels)
+  def initialize(trac, github, users, labels, deduplicate)
     @trac = trac
     repo = github['repo']
     logins = github['logins']
@@ -20,7 +20,9 @@ class Migrator
     @collaborators = @default.collaborators.map { |c| c[:login] }
     @labels = Hash[labels.map { |cat, rx| [cat, rx.map { |f, t| [Regexp.new(f), t] }] }]
     @milestones = Hash[@default.list_milestones.map { |m| [m[:title], m[:number]] }]
-    @issues = Hash[@default.list_issues.map { |i| [i[:title], i] }]
+    if deduplicate
+      @issues = Hash[@default.list_issues.map { |i| [i[:title], i] }]
+    end
     @ticket_to_issue = {}
   end
 
@@ -65,14 +67,14 @@ class Migrator
       #total_tickets -= 1
       #rate_check(100) if total_tickets % 100 == 0
       title = ticket[:summary]
-      if @issues.has_key?(title)
+      if @issues and @issues.has_key?(title)
         $logger.warn("skipping existing issue '#{title}'")
         next
       end
       begin
         issue = @clients[@users[ticket[:reporter]]].create_issue(title, '')
+        @issues[title] = issue if @issues
         $logger.info("created issue ##{issue[:number]} for ticket #{ticket[:id]}")
-        @issues[title] = issue
         [:description, :owner, :milestone, :type,
          :component, :priority, :version, :resolution].map do |cat|
           issue = change_issue(issue, ticket[:reporter], cat.to_s, ticket[cat])
@@ -294,6 +296,10 @@ class Options < Hash
       opts.on('-c config', '--config', 'set the configuration file') do |c|
         self[:config] = c
       end
+      opts.on('-d', '--deduplicate',
+              'do not migrate tickets w/ duplicate titles') do |d|
+        self[:deduplicate] = d
+      end
       opts.on_tail('-h', '--help', 'display this help and exit') do |help|
         puts(opts)
         exit
@@ -350,6 +356,7 @@ if __FILE__ == $0
   end
 
   trac = Trac.new(db)
-  migrator = Migrator.new(trac, cfg['github'], cfg['users'], cfg['labels'])
+  migrator = Migrator.new(trac, cfg['github'], cfg['users'], cfg['labels'],
+                          opts[:deduplicate])
   migrator.migrate(opts[:start])
 end
