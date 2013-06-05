@@ -10,13 +10,17 @@ require 'yaml'
 class Migrator
   def initialize(trac, github, users, labels)
     @trac = trac
-    @gh = github
-    # Only collaborators are viable assignees.
-    collaborators = @gh.collaborators.map { |c| c[:login] }
-    @users = Hash[users.select { |from,to| collaborators.include?(to) }]
-    @labels = Hash[labels.map { |topic, rx| [topic, rx.map { |f, t| [Regexp.new(f), t] }] }]
-    @milestones = Hash[@gh.list_milestones.map { |m| [m[:title], m[:number]] }]
-    @issues = Hash[@gh.list_issues.map { |i| [i[:title], i] }]
+    repo = github['repo']
+    logins = github['logins']
+    first = logins.shift
+    @clients = Hash.new(GitHub.new(first[0], first[1], repo))
+    @default = @clients[nil]
+    logins.each { |user, pass| @clients[user] = GitHub.new(user, pass, repo) }
+    @users = Hash[users]
+    @collaborators = @default.collaborators.map { |c| c[:login] }
+    @labels = Hash[labels.map { |cat, rx| [cat, rx.map { |f, t| [Regexp.new(f), t] }] }]
+    @milestones = Hash[@default.list_milestones.map { |m| [m[:title], m[:number]] }]
+    @issues = Hash[@default.list_issues.map { |i| [i[:title], i] }]
     @ticket_to_issue = {}
   end
 
@@ -45,10 +49,11 @@ class Migrator
         $logger.warn("ignoring milestone date '#{milestone[:due]}'")
       end
       $logger.info("creating new milestone #{name}")
-      ms = @gh.create_milestone(name, opts)
+      ms = @default.create_milestone(name, opts)
       @milestones[name] = ms[:number]
     end
   end
+
 
   # Creates github issues for trac tickets.
   def migrate_tickets(start_ticket)
@@ -56,37 +61,27 @@ class Migrator
     # We match the issue title to determine whether an issue exists already.
     total_tickets = @trac.tickets.count
     @trac.tickets.order(:id).where{id >= start_ticket}.all.each do |ticket|
-      total_tickets -= 1
-      rate_check(100) if total_tickets % 100 == 0
+      # FIXME: needs porting to multi-user scenario.
+      #total_tickets -= 1
+      #rate_check(100) if total_tickets % 100 == 0
       title = ticket[:summary]
       if @issues.has_key?(title)
         $logger.warn("skipping existing issue '#{title}'")
         next
       end
       begin
-        opts = {}
-        assignee = translate_username(ticket[:owner])
-        opts[:assignee] = assignee if assignee
-        milestone = @milestones[ticket[:milestone]]
-        opts[:milestone] = milestone if milestone
-        body = markdownify(ticket[:description])
-        prepend_author(ticket[:reporter], body)
-        issue = @gh.create_issue(title, body, opts)
+        issue = @clients[@users[ticket[:reporter]]].create_issue(title, '')
+        $logger.info("created issue ##{issue[:number]} for ticket #{ticket[:id]}")
         @issues[title] = issue
-        # FIXME: Perhaps this label checking is redundant and only makes sense
-        # during replaying of the changes later, but my Trac fu is not enough to
-        # make that call.
-        [:type, :component, :priority, :version, :resolution].each do |category|
-          if labs = translate_labels(issue, category, ticket[category])
-            $logger.debug("issue #{issue[:number]}: adding labels '#{labs}'")
-            @gh.update_issue_opts(issue, :labels => labs)
-          end
+        [:description, :owner, :milestone, :type,
+         :component, :priority, :version, :resolution].map do |cat|
+          issue = change_issue(issue, ticket[:reporter], cat.to_s, ticket[cat])
         end
         $logger.debug('replaying ticket history')
         @trac.changes.where(:ticket => ticket[:id]).each do |chg|
-          replay_history(issue, chg[:author], chg[:field], chg[:newvalue])
+          issue = change_issue(issue, chg[:author], chg[:field], chg[:newvalue])
         end
-        $logger.info("migrated ticket #{ticket[:id]} to issue ##{issue[:number]}")
+        $logger.info("migrated ticket #{ticket[:id]}")
       rescue Interrupt
         $logger.error("cancelled migration of ticket #{ticket[:id]} '#{title}'")
         exit 1
@@ -94,57 +89,71 @@ class Migrator
     end
   end
 
-  # Replays the ticket history of a given ticket.
-  def replay_history(issue, author, category, value)
+  # Replays the ticket history of a given ticket and returns the new issue.
+  def change_issue(issue, author, category, value)
     i = issue[:number]
+    client = @clients[@users[author]]
     case category
     when 'milestone'
       ms = @milestones[value]
+      return issue unless ms
       $logger.debug("issue #{i}: updating milestone to '#{ms}'")
-      @gh.update_issue_opts(issue, :milestone => ms)
+      return client.update_issue_opts(issue, :milestone => ms)
     when 'owner'
-      if user = translate_username(value)
-        $logger.debug("issue #{i}: updating assignee to '#{user}'")
-        @gh.update_issue_opts(issue, :assignee => user)
-      end
+      owner = @users[value]
+      return issue unless (owner and @collaborators.include?(owner))
+      $logger.debug("issue #{i}: updating assignee to '#{owner}'")
+      return client.update_issue_opts(issue, :assignee => owner)
     when 'status'
       case value
       when 'closed'
         $logger.debug("issue #{i}: closing")
-        @gh.close_issue(i)
+        return client.close_issue(i)
       when 'reopened'
         $logger.debug("issue #{i}: reopening")
-        @gh.reopen_issue(i)
+        return client.reopen_issue(i)
       end
     when 'summary'
       $logger.debug("issue #{i}: updating title to '#{value}'")
-      @gh.update_issue(i, value, issue[:body])
+      return client.update_issue(i, value, issue[:body])
     when 'description'
       $logger.debug("issue #{i}: updating body")
-      reporter = issue.body.split("\n\n", 1)[0]
-      body = [reporter, value].join("\n\n")
-      @gh.update_issue(i, issue[:title], body)
+      body = markdownify(author, value)
+      return client.update_issue(i, issue[:title], body)
+    when /resolution|priority|component|type|version/
+      old_labs = issue[:labels].map { |l| l[:name] }
+      return issue unless @labels.has_key?(category)
+      t, f = @labels[category].partition { |pat, rep| pat.match(value) }
+      if t.empty?
+        $logger.warn("issue #{i}: no match for label '#{value}' in '#{category}'")
+        return issue
+      elsif t.size > 1
+        $logger.error("issue #{i}: more than one match for '#{value}' in '#{category}'")
+        exit 1
+      end
+      new_labs = old_labs.reject { |lab| f.find { |pat, rep| pat.match(lab) } }
+      if old_labs.size != new_labs.size
+        $logger.debug("issue #{i}: removed existing labels in '#{category}'")
+      end
+      new_label = t[0][1]
+      $logger.debug("issue #{i}: adding label '#{new_label}'")
+      new_labs << new_label
+      $logger.debug("issue #{i}: updating lables to #{new_labs}")
+      return client.update_issue_opts(issue, :labels => new_labs)
     when 'comment'
-      return if value.empty? || value =~ /Milestone.*deleted/
+      return issue if value.empty? || value =~ /Milestone.*deleted/
       max_len = 30
       excerpt = value[0, max_len].gsub(/\n|\r/, ' ')
       excerpt << '...' if value.size > max_len
       $logger.debug("issue #{i}: adding comment '#{excerpt}'")
-      @gh.add_comment(i, prepend_author(author, markdownify(value)))
-    when /resolution|priority|component|type|version/
-      labels = translate_labels(issue, category, value)
-      @gh.update_issue_opts(issue, :labels => labels)
-    when /keywords|cc|reporter/
-      # TODO
+      client.add_comment(i, markdownify(author, value))
+    when /keywords|cc|reporter/ # TODO
     end
+    return issue
   end
 
-  def prepend_author(author, content)
-    content.insert(0, "**Original reporter**: *#{author}*\n\n")
-  end
-
-  def rate_check(bound, seconds=30)
-    limit, remaining = @gh.rate_limit
+  def rate_check(client, bound, seconds=30)
+    limit, remaining = client.rate_limit
     $logger.debug("#{remaining}/#{limit} operations available")
     while remaining < bound
       $logger.info("less than #{bound} operations viable, sleeping...")
@@ -152,34 +161,9 @@ class Migrator
     end
   end
 
-  def translate_username(user)
-    @users[user]
-  end
-
-  # Adds one given label from a predefined category and removes all other
-  # labels from that category.
-  def translate_labels(issue, category, label)
-    i = issue[:number]
-    old_labs = issue[:labels].map { |l| l[:name] }
-    return nil unless @labels.has_key?(category)
-    t, f = @labels[category].partition { |pat, rep| pat =~ label }
-    if t.empty?
-      $logger.warn("issue #{i}: no match for label '#{label}' in '#{category}'")
-      return nil
-    elsif t.size > 1
-      $logger.error("issue #{i}: more than one match for '#{label}' in '#{category}'")
-      exit 1
-    end
-    new_labs = old_labs.reject { |lab| f.find { |pat, rep|  pat =~ lab } }
-    if old_labs.size != new_labs.size
-      $logger.debug("issue #{i}: removed existing labels in '#{category}'")
-    end
-    new_label = t[0][1]
-    $logger.debug("issue #{i}: adding label '#{new_label}'")
-    new_labs << new_label
-  end
-
-  def markdownify(str)
+  def markdownify(author, str)
+    # Line endings
+    str.gsub!("\r\n", "\n")
     # Code
     str.gsub!(/\{\{\{([^\n]+?)\}\}\}/, '`\1`')
     str.gsub!(/\{\{\{(.+?)\}\}\}/m, '```\1```')
@@ -197,6 +181,12 @@ class Migrator
     # Lists
     str.gsub!(/(^\s+)\*/, '\1-')
     str.gsub!(/(^\s+)(\d)\./, '\1\2.')
+    # Authorship
+    user = @users[author]
+    if not @clients.has_key?(user)
+      reporter = user ? "[#{user}](https://github.com/#{user})" : author
+      str.insert(0, "**Original reporter**: *#{reporter}*\n\n")
+    end
     str
   end
 end
@@ -214,8 +204,9 @@ end
 
 class GitHub
   def initialize(user, pass, repo)
-    $logger.debug("connecting to github at repo '#{repo}'")
-    @client = Octokit::Client.new(:login => user, :password => pass)
+    @user = user
+    $logger.debug("#{@user} connects to github repo '#{repo}'")
+    @client = Octokit::Client.new(:login => @user, :password => pass)
     @repo = repo
   end
 
@@ -234,7 +225,7 @@ class GitHub
   end
 
   def list_issues
-    $logger.debug('fetching all open issues')
+    $logger.debug("#{@user} fetches all open issues in #{@repo}")
     open = fetch_pagewise { |i| @client.list_issues(@repo, :page => i) }
     closed = fetch_pagewise do |i|
       @client.list_issues(@repo, {:state => 'closed', :page => i})
@@ -243,7 +234,7 @@ class GitHub
   end
 
   def create_issue(*args)
-    $logger.debug("creating issue '#{args[0]}'")
+    $logger.debug("#{@user} creates issue '#{args[0]}'")
     if args[1].size > 2**16
       msg = "\n\n*(issue truncated due to size)*"
       $logger.warn("truncating issue '#{args[0]}' (#{args[1].size} bytes)")
@@ -359,8 +350,6 @@ if __FILE__ == $0
   end
 
   trac = Trac.new(db)
-  gh = cfg['github']
-  github = GitHub.new(gh['user'], gh['pass'], gh['repo'])
-  migrator = Migrator.new(trac, github, cfg['users'], cfg['labels'])
+  migrator = Migrator.new(trac, cfg['github'], cfg['users'], cfg['labels'])
   migrator.migrate(opts[:start])
 end

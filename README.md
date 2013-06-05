@@ -43,9 +43,10 @@ The YAML configuration file contains four sections. The section `trac` includes
 all trac-related configuration options. At this point trac-hub only supports
 SQLite, but it would be trivial to add PostgreSQL and MySQL support.
 
-The section `github` includes your github login credentials and the repository
-in which to migrate. Note that all issues and comments will use the provided
-username.
+The section `github` includes the repository to migrate as well as a list of
+github account credentials. The latter enables creating issues/comments under
+the corresponding github user. If trac-hub cannot map a trac user to a github
+user, it defaults to the first account entry. 
 
 The section `labels` allows for custom label mappings. Since github's issue
 tracker does not have a first-class notion of ticket priority, type, and
