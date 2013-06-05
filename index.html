@@ -4,11 +4,11 @@
   <head>
     <meta charset='utf-8' />
     <meta http-equiv="X-UA-Compatible" content="chrome=1" />
-    <meta name="description" content="Trac-hub : Converts trac tickets to github issues." />
+    <meta name="description" content="trac-hub : Converts trac tickets to github issues." />
 
     <link rel="stylesheet" type="text/css" media="screen" href="stylesheets/stylesheet.css">
 
-    <title>Trac-hub</title>
+    <title>trac-hub</title>
   </head>
 
   <body>
@@ -18,7 +18,7 @@
         <header class="inner">
           <a id="forkme_banner" href="https://github.com/mavam/trac-hub">View on GitHub</a>
 
-          <h1 id="project_title">Trac-hub</h1>
+          <h1 id="project_title">trac-hub</h1>
           <h2 id="project_tagline">Converts trac tickets to github issues.</h2>
 
             <section id="downloads">
@@ -66,6 +66,12 @@ the script. You can also specify the configuration file on the command line:</p>
 <pre><code>./trac-hub -s 42
 </code></pre>
 
+<p>One can also avoid migration of tickets whose title exists already in the
+github issue tracker:</p>
+
+<pre><code>./trac-hub -d
+</code></pre>
+
 <p><em>Note</em>: when converting your trac setup to github, it is prudent to first try
 the migration into a test repository which you can delete afterwards. If this
 worked out fine and delivered the expected results, one can still aim the
@@ -78,9 +84,10 @@ script at the real repository.</p>
 all trac-related configuration options. At this point trac-hub only supports
 SQLite, but it would be trivial to add PostgreSQL and MySQL support.</p>
 
-<p>The section <code>github</code> includes your github login credentials and the repository
-in which to migrate. Note that all issues and comments will use the provided
-username.</p>
+<p>The section <code>github</code> includes the repository to migrate as well as a list of
+github account credentials. The latter enables creating issues/comments under
+the corresponding github user. If trac-hub cannot map a trac user to a github
+user, it defaults to the first account entry. </p>
 
 <p>The section <code>labels</code> allows for custom label mappings. Since github's issue
 tracker does not have a first-class notion of ticket priority, type, and
@@ -100,7 +107,7 @@ push privileges; trac-hub ignores unauthorized mappings.</p>
     <!-- FOOTER  -->
     <div id="footer_wrap" class="outer">
       <footer class="inner">
-        <p class="copyright">Trac-hub maintained by <a href="https://github.com/mavam">mavam</a></p>
+        <p class="copyright">trac-hub maintained by <a href="https://github.com/mavam">mavam</a></p>
         <p>Published with <a href="http://pages.github.com">GitHub Pages</a></p>
       </footer>
     </div>
