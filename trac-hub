@@ -138,6 +138,7 @@ class Migrator
         $logger.debug("issue #{i}: removed existing labels in '#{category}'")
       end
       new_label = t[0][1]
+      return issue if new_label.empty?
       $logger.debug("issue #{i}: adding label '#{new_label}'")
       new_labs << new_label
       $logger.debug("issue #{i}: updating lables to #{new_labs}")
