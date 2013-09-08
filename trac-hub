@@ -77,11 +77,11 @@ class Migrator
         $logger.info("created issue ##{issue[:number]} for ticket #{ticket[:id]}")
         [:description, :owner, :milestone, :type,
          :component, :priority, :version, :resolution].map do |cat|
-          issue = change_issue(issue, ticket[:reporter], cat.to_s, ticket[cat])
+          issue = change_issue(issue, ticket[:reporter], cat.to_s, ticket[cat], ticket[:time])
         end
         $logger.debug('replaying ticket history')
         @trac.changes.where(:ticket => ticket[:id]).each do |chg|
-          issue = change_issue(issue, chg[:author], chg[:field], chg[:newvalue])
+          issue = change_issue(issue, chg[:author], chg[:field], chg[:newvalue], chg[:time])
         end
         $logger.info("migrated ticket #{ticket[:id]}")
       rescue Interrupt
@@ -92,7 +92,7 @@ class Migrator
   end
 
   # Replays the ticket history of a given ticket and returns the new issue.
-  def change_issue(issue, author, category, value)
+  def change_issue(issue, author, category, value, time)
     i = issue[:number]
     client = @clients[@users[author]]
     case category
@@ -120,7 +120,7 @@ class Migrator
       return client.update_issue(i, value, issue[:body])
     when 'description'
       $logger.debug("issue #{i}: updating body")
-      body = markdownify(author, value)
+      body = markdownify(author, time, value)
       return client.update_issue(i, issue[:title], body)
     when /resolution|priority|component|type|version/
       old_labs = issue[:labels].map { |l| l[:name] }
@@ -149,7 +149,7 @@ class Migrator
       excerpt = value[0, max_len].gsub(/\n|\r/, ' ')
       excerpt << '...' if value.size > max_len
       $logger.debug("issue #{i}: adding comment '#{excerpt}'")
-      client.add_comment(i, markdownify(author, value))
+      client.add_comment(i, markdownify(author, time, value))
     when /keywords|cc|reporter/ # TODO
     end
     return issue
@@ -164,7 +164,7 @@ class Migrator
     end
   end
 
-  def markdownify(author, str)
+  def markdownify(author, time, str)
     # Line endings
     str.gsub!("\r\n", "\n")
     # Code
@@ -184,12 +184,16 @@ class Migrator
     # Lists
     str.gsub!(/(^\s+)\*/, '\1-')
     str.gsub!(/(^\s+)(\d)\./, '\1\2.')
+    # Time
+    dt = Time.at(time/1000000).strftime("%Y/%m/%d")
+    header = "**Original date**: #{dt}\n"
     # Authorship
     user = @users[author]
     if not @clients.has_key?(user)
       reporter = user ? "[#{user}](https://github.com/#{user})" : author
-      str.insert(0, "**Original reporter**: *#{reporter}*\n\n")
+      header += "**Original reporter**: *#{reporter}*\n"
     end
+    str.insert(0, "#{header}\n")
     str
   end
 end
