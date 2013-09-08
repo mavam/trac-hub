@@ -190,6 +190,8 @@ class Migrator
     # Authorship
     user = @users[author]
     if not @clients.has_key?(user)
+      ## PYINSTALLER SPECIAL
+      author = "anonymous" if author == "openticket"
       reporter = user ? "[#{user}](https://github.com/#{user})" : author
       header += "**Original reporter**: *#{reporter}*\n"
     end
