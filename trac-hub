@@ -45,7 +45,11 @@ class Migrator
       opts[:state] = milestone[:completed] == 0 ? 'open' : 'closed'
       opts[:description] = milestone[:description]
       begin
-        t = DateTime.parse(milestone[:due])
+        if milestone[:due].is_a? Numeric and milestone[:due] > 0
+          t = Time.at(milestone[:due]/1000000)
+        else
+          t = DateTime.parse(milestone[:due])
+        end
         opts[:due_on] = t.to_time
       rescue
         $logger.warn("ignoring milestone date '#{milestone[:due]}'")
