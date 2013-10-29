@@ -18,7 +18,7 @@ class Migrator
     logins.each { |user, pass| @clients[user] = GitHub.new(user, pass, repo) }
     @users = Hash[users]
     @collaborators = @default.collaborators.map { |c| c[:login] }
-    @labels = Hash[labels.map { |cat, rx| [cat, rx.map { |f, t| [Regexp.new(f), t] }] }]
+    @labels = Hash[labels.map { |cat, rx| [cat, rx.map { |f, t| [Regexp.new('^' + f + '$'), t] }] }]
     @milestones = Hash[@default.list_milestones.map { |m| [m[:title], m[:number]] }]
     if deduplicate
       @issues = Hash[@default.list_issues.map { |i| [i[:title], i] }]
