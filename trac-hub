@@ -15,8 +15,16 @@ class Migrator
     first = logins.shift
     @clients = Hash.new(GitHub.new(first[0], first[1], repo))
     @default = @clients[nil]
-    logins.each { |user, pass| @clients[user] = GitHub.new(user, pass, repo) }
-    @users = Hash[users]
+    $logger.info('Retrieving e-mails for users with a valid login')
+    logins.each do |user, pass|
+      client = GitHub.new(user, pass, repo)
+      mail_map = @clients[user].emails.map { |mail| [mail, @clients[user]] }
+      $logger.debug("Retrieving e-mails for user: #{user} ")
+      mails_arr = client.emails
+      $logger.debug("Mails: #{mails_arr}")
+      @clients.merge!(Hash[mails_arr.map { |mail| [mail, client] }])
+    end
+
     @collaborators = @default.collaborators.map { |c| c[:login] }
     @labels = Hash[labels.map { |cat, rx| [cat, rx.map { |f, t| [Regexp.new('^' + f + '$'), t] }] }]
     @milestones = Hash[@default.list_milestones.map { |m| [m[:title], m[:number]] }]
@@ -24,6 +32,7 @@ class Migrator
       @issues = Hash[@default.list_issues.map { |i| [i[:title], i] }]
     end
     @ticket_to_issue = {}
+    @trac_mails_cache = Hash.new
   end
 
   def migrate(start_ticket = 0)
@@ -32,6 +41,15 @@ class Migrator
   end
 
   private
+
+  # returns the author mail if found, otherwise author itself
+  def trac_mail(author)
+    return @trac_mails_cache[author] if @trac_mails_cache.has_key?(author)
+    # tries to retrieve the email from trac db
+    data = @trac.sessions.select(:value).where('name = "email" AND sid = ?', author)
+    return (@trac_mails_cache[author] = data.first[:value]) if data.count == 1
+    return (@trac_mails_cache[author] = author) # not found
+  end
 
   def migrate_milestones
     $logger.info('migrating milestones')
@@ -72,16 +90,17 @@ class Migrator
         next
       end
       begin
-        issue = @clients[@users[ticket[:reporter]]].create_issue(title, '')
+        author = trac_mail(ticket[:reporter])
+        issue = @clients[author].create_issue(title, '')
         @issues[title] = issue if @issues
         $logger.info("created issue ##{issue[:number]} for ticket #{ticket[:id]}")
         [:description, :owner, :milestone, :type,
          :component, :priority, :version, :resolution].map do |cat|
-          issue = change_issue(issue, ticket[:reporter], cat.to_s, ticket[cat], ticket[:time])
+          issue = change_issue(issue, author, cat.to_s, ticket[cat], ticket[:time])
         end
         $logger.debug('replaying ticket history')
         @trac.changes.where(:ticket => ticket[:id]).each do |chg|
-          issue = change_issue(issue, chg[:author], chg[:field], chg[:newvalue], chg[:time])
+          issue = change_issue(issue, trac_mail(chg[:author]), chg[:field], chg[:newvalue], chg[:time])
         end
         $logger.info("migrated ticket #{ticket[:id]}")
       rescue Interrupt
@@ -94,7 +113,7 @@ class Migrator
   # Replays the ticket history of a given ticket and returns the new issue.
   def change_issue(issue, author, category, value, time)
     i = issue[:number]
-    client = @clients[@users[author]]
+    client = @clients[author]
     case category
     when 'milestone'
       ms = @milestones[value]
@@ -102,7 +121,7 @@ class Migrator
       $logger.debug("issue #{i}: updating milestone to '#{ms}'")
       return client.update_issue_opts(issue, :milestone => ms)
     when 'owner'
-      owner = @users[value]
+      owner = client.login
       return issue unless (owner and @collaborators.include?(owner))
       $logger.debug("issue #{i}: updating assignee to '#{owner}'")
       return client.update_issue_opts(issue, :assignee => owner)
@@ -188,12 +207,10 @@ class Migrator
     dt = Time.at(time/1000000).strftime("%Y/%m/%d")
     header = "**Original date**: #{dt}\n"
     # Authorship
-    user = @users[author]
-    if not @clients.has_key?(user)
+    if not @clients.has_key?(author)
       ## PYINSTALLER SPECIAL
       author = "anonymous" if author == "openticket"
-      reporter = user ? "[#{user}](https://github.com/#{user})" : author
-      header += "**Original reporter**: *#{reporter}*\n"
+      header += "**Original reporter**: *#{author}*\n"
     end
     str.insert(0, "#{header}\n")
     str
@@ -201,13 +218,14 @@ class Migrator
 end
 
 class Trac
-  attr_reader :milestones, :tickets, :changes
+  attr_reader :milestones, :tickets, :changes, :sessions
   def initialize(db)
     $logger.info('loading milestones and tickets')
     @db = db
     @milestones = @db[:milestone]
     @tickets = @db[:ticket]
     @changes = @db[:ticket_change]
+    @sessions = @db[:session_attribute]
   end
 end
 
@@ -274,6 +292,14 @@ class GitHub
 
   def rate_limit
     [@client.rate_limit, @client.rate_limit_remaining]
+  end
+
+  def emails(opts = {})
+    @client.emails(opts)
+  end
+
+  def login
+    @client.login
   end
 
   private
