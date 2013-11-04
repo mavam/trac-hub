@@ -8,7 +8,7 @@ require 'sequel'
 require 'yaml'
 
 class Migrator
-  def initialize(trac, github, users, labels, deduplicate)
+  def initialize(trac, github, labels, deduplicate)
     @trac = trac
     repo = github['repo']
     logins = github['logins']
@@ -389,7 +389,6 @@ if __FILE__ == $0
   end
 
   trac = Trac.new(db)
-  migrator = Migrator.new(trac, cfg['github'], cfg['users'], cfg['labels'],
-                          opts[:deduplicate])
+  migrator = Migrator.new(trac, cfg['github'], cfg['labels'], opts[:deduplicate])
   migrator.migrate(opts[:start])
 end
