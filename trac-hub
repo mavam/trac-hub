@@ -183,6 +183,11 @@ class Migrator
     # Lists
     str.gsub!(/(^\s+)\*/, '\1-')
     str.gsub!(/(^\s+)(\d)\./, '\1\2.')
+    # Changeset
+    str.gsub!(/\[changeset:([^\]]+)\]/, '\1')
+    str.gsub!(/changeset:([0-9a-f]+)/, '\1')
+    # Ticket
+    str.gsub!(/ticket:(\d+)/, '#\1')
     # Authorship
     user = @users[author]
     if not @clients.has_key?(user)
@@ -250,11 +255,19 @@ class GitHub
   end
 
   def close_issue(*args)
-    @client.close_issue(@repo, *args)
+    begin
+      @client.close_issue(@repo, *args)
+    rescue
+      $logger.info("!!! can't close issue '#{args[0]}'")
+    end
   end
 
   def reopen_issue(*args)
-    @client.reopen_issue(@repo, *args)
+    begin
+      @client.reopen_issue(@repo, *args)
+    rescue
+      $logger.info("!!! can't reopen issue '#{args[0]}'")
+    end
   end
 
   def add_comment(*args)
