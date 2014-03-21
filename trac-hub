@@ -56,7 +56,6 @@ class Migrator
     end
   end
 
-
   # Creates github issues for trac tickets.
   def migrate_tickets(start_ticket)
     $logger.info('migrating issues')
@@ -77,7 +76,7 @@ class Migrator
         $logger.info("created issue ##{issue[:number]} for ticket #{ticket[:id]}")
         [:description, :owner, :milestone, :type,
          :component, :priority, :version, :resolution].map do |cat|
-          issue = change_issue(issue, ticket[:reporter], cat.to_s, ticket[cat])
+          issue = change_issue(issue, ticket[:reporter], cat.to_s, ticket[cat], ticket)
         end
         $logger.debug('replaying ticket history')
         @trac.changes.where(:ticket => ticket[:id]).each do |chg|
@@ -92,7 +91,7 @@ class Migrator
   end
 
   # Replays the ticket history of a given ticket and returns the new issue.
-  def change_issue(issue, author, category, value)
+  def change_issue(issue, author, category, value, ticket=nil)
     i = issue[:number]
     client = @clients[@users[author]]
     case category
@@ -120,7 +119,13 @@ class Migrator
       return client.update_issue(i, value, issue[:body])
     when 'description'
       $logger.debug("issue #{i}: updating body")
-      body = markdownify(author, value)
+      created_at=nil
+      updated_at=nil
+      if ticket
+        created_at = Time.at(ticket[:time] / 1e6, ticket[:time] % 1e6)
+        updated_at = Time.at(ticket[:changetime] / 1e6, ticket[:changetime] % 1e6)
+      end
+      body = markdownify(author, value, created_at, updated_at)
       return client.update_issue(i, issue[:title], body)
     when /resolution|priority|component|type|version/
       old_labs = issue[:labels].map { |l| l[:name] }
@@ -148,7 +153,12 @@ class Migrator
       excerpt = value[0, max_len].gsub(/\n|\r/, ' ')
       excerpt << '...' if value.size > max_len
       $logger.debug("issue #{i}: adding comment '#{excerpt}'")
-      client.add_comment(i, markdownify(author, value))
+      created_at=nil
+      if ticket
+        created_at = Time.at(ticket[:time] / 1e6, ticket[:time] % 1e6)
+      end
+      body = markdownify(author, value, created_at)
+      client.add_comment(i, body)
     when /keywords|cc|reporter/ # TODO
     end
     return issue
@@ -163,12 +173,13 @@ class Migrator
     end
   end
 
-  def markdownify(author, str)
+  def markdownify(author, str, created_at=nil, updated_at=nil)
     # Line endings
     str.gsub!("\r\n", "\n")
     # Code
     str.gsub!(/\{\{\{([^\n]+?)\}\}\}/, '`\1`')
     str.gsub!(/\{\{\{(.+?)\}\}\}/m, '```\1```')
+    str.gsub!(/(?<=```)#!/m, '')
     # Headings
     str.gsub!(/\=\=\=\=\s(.+?)\s\=\=\=\=/, '#### \1')
     str.gsub!(/\=\=\=\s(.+?)\s\=\=\=/, '### \1')
@@ -188,11 +199,27 @@ class Migrator
     str.gsub!(/changeset:([0-9a-f]+)/, '\1')
     # Ticket
     str.gsub!(/ticket:(\d+)/, '#\1')
-    # Authorship
+    # Authorship & times
+    extra = ""
     user = @users[author]
     if not @clients.has_key?(user)
-      reporter = user ? "[#{user}](https://github.com/#{user})" : author
-      str.insert(0, "**Original reporter**: *#{reporter}*\n\n")
+      if user != author
+        author = "#{author} (@#{user})"
+      end
+      reporter = user ? "[#{author}](https://github.com/#{user})" : author
+      extra = "Originally by: *#{reporter}*"
+    end
+    if created_at
+      unless extra.empty?
+        extra = "#{extra}, "
+      end
+      extra = "#{extra}#{created_at.strftime("%Y-%m-%d")}"
+      if updated_at != created_at
+        extra = "#{extra} (#{updated_at.strftime("%Y-%m-%d")})"
+      end
+    end
+    unless extra.empty?
+      str.insert(0, "#{extra}\n\n----\n")
     end
     str
   end
