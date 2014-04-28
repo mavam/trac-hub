@@ -80,18 +80,19 @@ class Migrator
         end
         $logger.debug('replaying ticket history')
         @trac.changes.where(:ticket => ticket[:id]).each do |chg|
-          issue = change_issue(issue, chg[:author], chg[:field], chg[:newvalue])
+          issue = change_issue(issue, chg[:author], chg[:field], chg[:newvalue], nil, chg[:time])
         end
         $logger.info("migrated ticket #{ticket[:id]}")
       rescue Interrupt
         $logger.error("cancelled migration of ticket #{ticket[:id]} '#{title}'")
         exit 1
       end
+      gets.chomp
     end
   end
 
   # Replays the ticket history of a given ticket and returns the new issue.
-  def change_issue(issue, author, category, value, ticket=nil)
+  def change_issue(issue, author, category, value, ticket=nil, updated=nil)
     i = issue[:number]
     client = @clients[@users[author]]
     case category
@@ -154,8 +155,8 @@ class Migrator
       excerpt << '...' if value.size > max_len
       $logger.debug("issue #{i}: adding comment '#{excerpt}'")
       created_at=nil
-      if ticket
-        created_at = Time.at(ticket[:time] / 1e6, ticket[:time] % 1e6)
+      if updated
+        created_at = Time.at(updated / 1e6, updated % 1e6)
       end
       body = markdownify(author, value, created_at)
       client.add_comment(i, body)
@@ -195,6 +196,7 @@ class Migrator
     str.gsub!(/(^\s+)\*/, '\1-')
     str.gsub!(/(^\s+)(\d)\./, '\1\2.')
     # Changeset
+    str.gsub!(/\[changeset:"?([^\]]+)\/invenio"?\]/, '\1')
     str.gsub!(/\[changeset:([^\]]+)\]/, '\1')
     str.gsub!(/changeset:([0-9a-f]+)/, '\1')
     # Ticket
@@ -204,7 +206,10 @@ class Migrator
     user = @users[author]
     if not @clients.has_key?(user)
       if user != author
-        author = "#{author} (@#{user})"
+        author = "#{author}"
+        if user
+          author += " (@#{user})"
+        end
       end
       reporter = user ? "[#{author}](https://github.com/#{user})" : author
       extra = "Originally by: *#{reporter}*"
@@ -213,13 +218,15 @@ class Migrator
       unless extra.empty?
         extra = "#{extra}, "
       end
-      extra = "#{extra}#{created_at.strftime("%Y-%m-%d")}"
-      if updated_at != created_at
-        extra = "#{extra} (#{updated_at.strftime("%Y-%m-%d")})"
+      if created_at
+        extra = "#{extra} created on: #{created_at.strftime("%Y-%m-%d")}"
       end
+      #if updated_at and updated_at != created_at
+      #  extra = "#{extra} (modified on: #{updated_at.strftime("%Y-%m-%d")})"
+      #end
     end
     unless extra.empty?
-      str.insert(0, "#{extra}\n\n----\n")
+      str.insert(0, "#{extra}\n\n")
     end
     str
   end
