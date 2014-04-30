@@ -6,6 +6,7 @@ require 'octokit'
 require 'optparse'
 require 'sequel'
 require 'yaml'
+require 'set'
 
 class Migrator
   def initialize(trac, github, users, labels, deduplicate)
@@ -72,6 +73,7 @@ class Migrator
       end
       begin
         issue = @clients[@users[ticket[:reporter]]].create_issue(title, '')
+        sleep 1
         @issues[title] = issue if @issues
         $logger.info("created issue ##{issue[:number]} for ticket #{ticket[:id]}")
         [:description, :owner, :milestone, :type,
@@ -81,6 +83,7 @@ class Migrator
         $logger.debug('replaying ticket history')
         @trac.changes.where(:ticket => ticket[:id]).each do |chg|
           issue = change_issue(issue, chg[:author], chg[:field], chg[:newvalue], nil, chg[:time])
+          sleep 0.2
         end
         $logger.info("migrated ticket #{ticket[:id]}")
       rescue Interrupt
@@ -146,8 +149,13 @@ class Migrator
       new_label = t[0][1]
       $logger.debug("issue #{i}: adding label '#{new_label}'")
       new_labs << new_label
+      new_labs_set = Set.new new_labs
       $logger.debug("issue #{i}: updating lables to #{new_labs}")
-      return client.update_issue_opts(issue, :labels => new_labs)
+      begin
+        return client.update_issue_opts(issue, :labels => new_labs_set.to_a)
+      rescue
+        $logger.error("issue #{i}: problem with saving labels '#{new_labs}'")
+      end
     when 'comment'
       return issue if value.empty? || value =~ /Milestone.*deleted/
       max_len = 30
@@ -159,7 +167,11 @@ class Migrator
         created_at = Time.at(updated / 1e6, updated % 1e6)
       end
       body = markdownify(author, value, created_at)
-      client.add_comment(i, body)
+      begin
+        client.add_comment(i, body)
+      rescue
+        $logger.error("issue #{i}: problem with saving comment: Originally by #{author} '#{body}'")
+      end
     when /keywords|cc|reporter/ # TODO
     end
     return issue
@@ -192,6 +204,7 @@ class Migrator
     # Font styles
     str.gsub!(/'''(.+?)'''/, '**\1**')
     str.gsub!(/''(.+?)''/, '*\1*')
+    str.gsub!(/[^:]\/\/(.+?[^:])\/\//, '_\1_')
     # Lists
     str.gsub!(/(^\s+)\*/, '\1-')
     str.gsub!(/(^\s+)(\d)\./, '\1\2.')
@@ -202,7 +215,7 @@ class Migrator
     # Ticket
     str.gsub!(/ticket:(\d+)/, '#\1')
     # Authorship & times
-    extra = ""
+    extra = "Originally"
     user = @users[author]
     if not @clients.has_key?(user)
       if user != author
@@ -212,15 +225,10 @@ class Migrator
         end
       end
       reporter = user ? "[#{author}](https://github.com/#{user})" : author
-      extra = "Originally by: *#{reporter}*"
+      extra = "#{extra} by *#{reporter}*"
     end
     if created_at
-      unless extra.empty?
-        extra = "#{extra}, "
-      end
-      if created_at
-        extra = "#{extra} created on: #{created_at.strftime("%Y-%m-%d")}"
-      end
+      extra = "#{extra} on #{created_at.strftime("%Y-%m-%d")}"
       #if updated_at and updated_at != created_at
       #  extra = "#{extra} (modified on: #{updated_at.strftime("%Y-%m-%d")})"
       #end
