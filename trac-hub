@@ -72,10 +72,33 @@ class Migrator
         next
       end
       begin
-        issue = @clients[@users[ticket[:reporter]]].create_issue(title, '')
-        sleep 1
+        begin
+          issue = @default.issue(ticket[:id])
+          $logger.info("found ticket #{ticket[:id]}")
+          # wait for user input
+          gets.chomp
+        rescue
+          $logger.info("creating new ticket #{ticket[:id]}")
+          issue = @clients[@users[ticket[:reporter]]].create_issue(title, '')
+          sleep 0.2
+          $logger.info("created issue ##{issue[:number]} for ticket #{ticket[:id]}")
+        end
+
         @issues[title] = issue if @issues
-        $logger.info("created issue ##{issue[:number]} for ticket #{ticket[:id]}")
+
+        if issue[:number] < ticket[:id]
+          while issue[:number] < ticket[:id] do
+            $logger.info("create issue?")
+            gets.chomp
+            issue = @default.create_issue('Invalid issue number', '')
+            $logger.info("created issue ##{issue[:number]} for ticket #{ticket[:id]}")
+          end
+        end
+        if issue[:number] != ticket[:id]
+          $logger.info("mismatch issue ##{issue[:number]} for ticket #{ticket[:id]}")
+          exit 1
+        end
+
         [:description, :owner, :milestone, :type,
          :component, :priority, :version, :resolution].map do |cat|
           issue = change_issue(issue, ticket[:reporter], cat.to_s, ticket[cat], ticket)
@@ -90,7 +113,6 @@ class Migrator
         $logger.error("cancelled migration of ticket #{ticket[:id]} '#{title}'")
         exit 1
       end
-      gets.chomp
     end
   end
 
@@ -267,6 +289,10 @@ class GitHub
     open = @client.list_milestones(@repo, :state => 'open')
     closed = @client.list_milestones(@repo, :state => 'closed')
     open + closed
+  end
+
+  def issue(*args)
+    @client.issue(@repo, *args)
   end
 
   def create_milestone(*args)
