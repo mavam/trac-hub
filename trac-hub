@@ -61,9 +61,14 @@ class Migrator
     end
     @ticket_to_issue = {}
     @trac_mails_cache = Hash.new
+    @last_created_issue = @default.list_issues.map { |i| i[:number] }.max
+    $logger.info("Last created issue on GitHub is '#{@last_created_issue}'")
   end
 
-  def migrate(start_ticket = 0)
+  def migrate(start_ticket = -1)
+    if start_ticket == -1
+      start_ticket = @last_created_issue+1
+    end
     GracefulQuit.enable
     migrate_milestones
     migrate_tickets(start_ticket)
@@ -118,24 +123,28 @@ class Migrator
         $logger.warn("skipping existing issue '#{title}'")
         next
       end
-      begin
-        author = trac_mail(ticket[:reporter])
-        issue = @clients[author].create_issue(title, '')
-        @issues[title] = issue if @issues
-        $logger.info("created issue ##{issue[:number]} for ticket #{ticket[:id]}")
-        [:description, :owner, :milestone, :type,
-         :component, :priority, :version, :resolution].map do |cat|
-          issue = change_issue(issue, author, cat.to_s, ticket[cat], ticket[:time])
-        end
-        $logger.debug('replaying ticket history')
-        @trac.changes.where(:ticket => ticket[:id]).each do |chg|
-          issue = change_issue(issue, trac_mail(chg[:author]), chg[:field], chg[:newvalue], chg[:time])
-        end
-        $logger.info("migrated ticket #{ticket[:id]}")
-      rescue Interrupt
-        $logger.error("cancelled migration of ticket #{ticket[:id]} '#{title}'")
-        exit 1
+      while @last_created_issue+1 < ticket[:id]
+        # Create empty ticket to not lose the numbering
+        issue = @default.create_issue('prazdny', '')
+        @default.close_issue(issue[:number])
+        raise RuntimeError unless @last_created_issue+1 == issue[:number]
+        @last_created_issue = issue[:number]
+        $logger.warn("created empty existing issue '#{issue[:number]}'")
       end
+      author = trac_mail(ticket[:reporter])
+      issue = @clients[author].create_issue(title, '')
+      @issues[title] = issue if @issues
+      $logger.info("created issue ##{issue[:number]} for ticket #{ticket[:id]}")
+      [:description, :owner, :milestone, :type,
+       :component, :priority, :version, :resolution].map do |cat|
+        issue = change_issue(issue, author, cat.to_s, ticket[cat], ticket[:time])
+      end
+      $logger.debug('replaying ticket history')
+      @trac.changes.where(:ticket => ticket[:id]).each do |chg|
+        issue = change_issue(issue, trac_mail(chg[:author]), chg[:field], chg[:newvalue], chg[:time])
+      end
+      $logger.info("migrated ticket #{ticket[:id]}")
+      @last_created_issue = issue[:number]
       GracefulQuit.check("quitting after completing #{@last_created_issue}")
     end
   end
@@ -380,7 +389,7 @@ class Options < Hash
           raise 'missing configuration file' unless File.exists?(default)
           self[:config] = default
         end
-        self[:start] = 0 unless self[:start]
+        self[:start] = -1 unless self[:start]
       rescue => e
         STDERR.puts(e)
         STDERR.puts('run with -h to see available options')
