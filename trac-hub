@@ -6,6 +6,34 @@ require 'octokit'
 require 'optparse'
 require 'sequel'
 require 'yaml'
+require "singleton"
+
+class GracefulQuit
+  include Singleton
+
+  attr_accessor :breaker
+
+  def initialize
+    self.breaker = false
+  end
+
+  def self.enable
+    trap('INT') {
+      yield if block_given?
+      self.instance.breaker = true
+    }
+  end
+
+  def self.check(message = "Quitting")
+    if self.instance.breaker
+      yield if block_given?
+      puts message
+      exit
+    end
+  end
+
+end
+
 
 class Migrator
   def initialize(trac, github, labels, deduplicate)
@@ -36,6 +64,7 @@ class Migrator
   end
 
   def migrate(start_ticket = 0)
+    GracefulQuit.enable
     migrate_milestones
     migrate_tickets(start_ticket)
   end
@@ -107,6 +136,7 @@ class Migrator
         $logger.error("cancelled migration of ticket #{ticket[:id]} '#{title}'")
         exit 1
       end
+      GracefulQuit.check("quitting after completing #{@last_created_issue}")
     end
   end
 
