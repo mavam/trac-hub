@@ -254,6 +254,11 @@ class Migrator
     if not @clients.has_key?(author)
       ## PYINSTALLER SPECIAL
       author = "anonymous" if author == "openticket"
+      # Obfuscate email addresses: replace '@' and '.'
+      author.gsub!('@', ' AND ')
+      author.gsub!('.', ' DOT ')
+      author.gsub!('-', ' DASH ')
+      author.gsub!('com', ' COOM ')
       header += "**Original reporter**: *#{author}*\n"
     end
     str.insert(0, "#{header}\n")
