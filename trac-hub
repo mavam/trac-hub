@@ -44,13 +44,14 @@ class Migrator
     @clients = Hash.new(GitHub.new(first[0], first[1], repo))
     @default = @clients[nil]
     $logger.info('Retrieving e-mails for users with a valid login')
-    logins.each do |user, pass|
+    logins.each do |user, pass, emails|
       client = GitHub.new(user, pass, repo)
-      mail_map = @clients[user].emails.map { |mail| [mail, @clients[user]] }
-      $logger.debug("Retrieving e-mails for user: #{user} ")
-      mails_arr = client.emails
-      $logger.debug("Mails: #{mails_arr}")
-      @clients.merge!(Hash[mails_arr.map { |mail| [mail, client] }])
+      # Map user name to client object.
+      @clients[user] = client
+      # Map emails from config.yaml to login objects.
+      emails.each do |mail|
+          @clients[mail] = client
+      end
     end
 
     @collaborators = @default.collaborators.map { |c| c[:login] }
@@ -62,6 +63,10 @@ class Migrator
     @ticket_to_issue = {}
     @trac_mails_cache = Hash.new
     @last_created_issue = @default.list_issues.map { |i| i[:number] }.max
+    # Initialize to '0' if no ticket exist yet.
+    if @last_created_issue == nil
+        @last_created_issue = 0
+    end
     $logger.info("Last created issue on GitHub is '#{@last_created_issue}'")
   end
 
