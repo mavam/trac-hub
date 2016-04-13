@@ -7,32 +7,88 @@ require 'optparse'
 require 'sequel'
 require 'yaml'
 require 'set'
+require "singleton"
+
+class GracefulQuit
+  include Singleton
+
+  attr_accessor :breaker
+
+  def initialize
+    self.breaker = false
+  end
+
+  def self.enable
+    trap('INT') {
+      yield if block_given?
+      self.instance.breaker = true
+    }
+  end
+
+  def self.check(message = "Quitting")
+    if self.instance.breaker
+      yield if block_given?
+      puts message
+      exit
+    end
+  end
+
+end
 
 class Migrator
-  def initialize(trac, github, users, labels, deduplicate)
+  def initialize(trac, github, labels, deduplicate)
     @trac = trac
     repo = github['repo']
     logins = github['logins']
     first = logins.shift
     @clients = Hash.new(GitHub.new(first[0], first[1], repo))
     @default = @clients[nil]
-    logins.each { |user, pass| @clients[user] = GitHub.new(user, pass, repo) }
-    @users = Hash[users]
+    $logger.info('Retrieving e-mails for users with a valid login')
+    logins.each do |user, pass, emails|
+      client = GitHub.new(user, pass, repo)
+      # Map user name to client object.
+      @clients[user] = client
+      # Map emails from config.yaml to login objects.
+      emails.each do |mail|
+          @clients[mail] = client
+      end
+    end
+
     @collaborators = @default.collaborators.map { |c| c[:login] }
-    @labels = Hash[labels.map { |cat, rx| [cat, rx.map { |f, t| [Regexp.new(f), t] }] }]
+    @labels = Hash[labels.map { |cat, rx| [cat, rx.map { |f, t| [Regexp.new('^' + f + '$'), t] }] }]
     @milestones = Hash[@default.list_milestones.map { |m| [m[:title], m[:number]] }]
     if deduplicate
       @issues = Hash[@default.list_issues.map { |i| [i[:title], i] }]
     end
     @ticket_to_issue = {}
+    @trac_mails_cache = Hash.new
+    @last_created_issue = @default.list_issues.map { |i| i[:number] }.max
+    # Initialize to '0' if no ticket exist yet.
+    if @last_created_issue == nil
+        @last_created_issue = 0
+    end
+    $logger.info("Last created issue on GitHub is '#{@last_created_issue}'")
   end
 
-  def migrate(start_ticket = 0)
+  def migrate(start_ticket = -1)
+    if start_ticket == -1
+      start_ticket = @last_created_issue+1
+    end
+    GracefulQuit.enable
     migrate_milestones
     migrate_tickets(start_ticket)
   end
 
   private
+
+  # returns the author mail if found, otherwise author itself
+  def trac_mail(author)
+    return @trac_mails_cache[author] if @trac_mails_cache.has_key?(author)
+    # tries to retrieve the email from trac db
+    data = @trac.sessions.select(:value).where('name = "email" AND sid = ?', author)
+    return (@trac_mails_cache[author] = data.first[:value]) if data.count == 1
+    return (@trac_mails_cache[author] = author) # not found
+  end
 
   def migrate_milestones
     $logger.info('migrating milestones')
@@ -75,55 +131,62 @@ class Migrator
         $logger.warn("skipping existing issue '#{title}'")
         next
       end
+
+      while @last_created_issue+1 < ticket[:id]
+        # Create empty ticket to not lose the numbering
+        issue = @default.create_issue('prazdny', '')
+        @default.close_issue(issue[:number])
+        raise RuntimeError unless @last_created_issue+1 == issue[:number]
+        @last_created_issue = issue[:number]
+        $logger.warn("created empty existing issue '#{issue[:number]}'")
+      end
+
       begin
-        begin
-          issue = @default.issue(ticket[:id])
-          $logger.info("found ticket #{ticket[:id]}")
-          # wait for user input
+        issue = @default.issue(ticket[:id])
+        $logger.info("found ticket #{ticket[:id]}")
+        # wait for user input
+        gets.chomp
+      rescue
+        $logger.info("creating new ticket #{ticket[:id]}")
+        issue = @clients[@users[ticket[:reporter]]].create_issue(title, '')
+        sleep 0.2
+        $logger.info("created issue ##{issue[:number]} for ticket #{ticket[:id]}")
+      end
+
+      @issues[title] = issue if @issues
+
+      if issue[:number] < ticket[:id]
+        while issue[:number] < ticket[:id] do
+          $logger.info("create issue?")
           gets.chomp
-        rescue
-          $logger.info("creating new ticket #{ticket[:id]}")
-          issue = @clients[@users[ticket[:reporter]]].create_issue(title, '')
-          sleep 0.2
+          issue = @default.create_issue('Invalid issue number', '')
           $logger.info("created issue ##{issue[:number]} for ticket #{ticket[:id]}")
         end
-
-        @issues[title] = issue if @issues
-
-        if issue[:number] < ticket[:id]
-          while issue[:number] < ticket[:id] do
-            $logger.info("create issue?")
-            gets.chomp
-            issue = @default.create_issue('Invalid issue number', '')
-            $logger.info("created issue ##{issue[:number]} for ticket #{ticket[:id]}")
-          end
-        end
-        if issue[:number] != ticket[:id]
-          $logger.info("mismatch issue ##{issue[:number]} for ticket #{ticket[:id]}")
-          exit 1
-        end
-
-        [:description, :owner, :milestone, :type,
-         :component, :priority, :version, :resolution].map do |cat|
-          issue = change_issue(issue, ticket[:reporter], cat.to_s, ticket[cat], ticket)
-        end
-        $logger.debug('replaying ticket history')
-        @trac.changes.where(:ticket => ticket[:id]).each do |chg|
-          issue = change_issue(issue, chg[:author], chg[:field], chg[:newvalue], nil, chg[:time])
-          sleep 0.2
-        end
-        $logger.info("migrated ticket #{ticket[:id]}")
-      rescue Interrupt
-        $logger.error("cancelled migration of ticket #{ticket[:id]} '#{title}'")
+      end
+      if issue[:number] != ticket[:id]
+        $logger.info("mismatch issue ##{issue[:number]} for ticket #{ticket[:id]}")
         exit 1
       end
+
+      [:description, :owner, :milestone, :type,
+       :component, :priority, :version, :resolution].map do |cat|
+        issue = change_issue(issue, ticket[:reporter], cat.to_s, ticket[cat], ticket)
+      end
+      $logger.debug('replaying ticket history')
+      @trac.changes.where(:ticket => ticket[:id]).each do |chg|
+        issue = change_issue(issue, chg[:author], chg[:field], chg[:newvalue], nil, chg[:time])
+        sleep 0.2
+      end
+      $logger.info("migrated ticket #{ticket[:id]}")
+      @last_created_issue = issue[:number]
+      GracefulQuit.check("quitting after completing #{@last_created_issue}")
     end
   end
 
   # Replays the ticket history of a given ticket and returns the new issue.
   def change_issue(issue, author, category, value, ticket=nil, updated=nil)
     i = issue[:number]
-    client = @clients[@users[author]]
+    client = @clients[author]
     case category
     when 'milestone'
       ms = @milestones[value]
@@ -131,7 +194,7 @@ class Migrator
       $logger.debug("issue #{i}: updating milestone to '#{ms}'")
       return client.update_issue_opts(issue, :milestone => ms)
     when 'owner'
-      owner = @users[value]
+      owner = client.login
       return issue unless (owner and @collaborators.include?(owner))
       $logger.debug("issue #{i}: updating assignee to '#{owner}'")
       return client.update_issue_opts(issue, :assignee => owner)
@@ -173,6 +236,7 @@ class Migrator
         $logger.debug("issue #{i}: removed existing labels in '#{category}'")
       end
       new_label = t[0][1]
+      return issue if new_label.empty?
       $logger.debug("issue #{i}: adding label '#{new_label}'")
       new_labs << new_label
       new_labs_set = Set.new new_labs
@@ -244,12 +308,21 @@ class Migrator
     extra = "Originally"
     user = @users[author]
     if not @clients.has_key?(user)
+      ## PYINSTALLER SPECIAL
+      author = "anonymous" if author == "openticket"
       if user != author
         author = "#{author}"
         if user
           author += " (@#{user})"
         end
       end
+
+      # Obfuscate email addresses: replace '@' and '.'
+      author.gsub!('@', ' AND ')
+      author.gsub!('.', ' DOT ')
+      author.gsub!('-', ' DASH ')
+      author.gsub!('com', ' COOM ')
+ 
       reporter = user ? "[#{author}](https://github.com/#{user})" : author
       extra = "#{extra} by *#{reporter}*"
     end
@@ -262,18 +335,20 @@ class Migrator
     unless extra.empty?
       str.insert(0, "#{extra}\n\n")
     end
+    str.insert(0, "#{header}\n")
     str
   end
 end
 
 class Trac
-  attr_reader :milestones, :tickets, :changes
+  attr_reader :milestones, :tickets, :changes, :sessions
   def initialize(db)
     $logger.info('loading milestones and tickets')
     @db = db
     @milestones = @db[:milestone]
     @tickets = @db[:ticket]
     @changes = @db[:ticket_change]
+    @sessions = @db[:session_attribute]
   end
 end
 
@@ -354,6 +429,14 @@ class GitHub
     [@client.rate_limit, @client.rate_limit_remaining]
   end
 
+  def emails(opts = {})
+    @client.emails(opts)
+  end
+
+  def login
+    @client.login
+  end
+
   private
 
   def fetch_pagewise
@@ -389,7 +472,7 @@ class Options < Hash
         puts(opts)
         exit
       end
-      opts.on('-s', '--start-at ID', 'be verbose') do |id|
+      opts.on('-s', '--start-at ID', 'start migration from ticket with number <ID>') do |id|
         self[:start] = id
       end
       opts.on('-v', '--verbose', 'be verbose') do |v|
@@ -402,7 +485,7 @@ class Options < Hash
           raise 'missing configuration file' unless File.exists?(default)
           self[:config] = default
         end
-        self[:start] = 0 unless self[:start]
+        self[:start] = -1 unless self[:start]
       rescue => e
         STDERR.puts(e)
         STDERR.puts('run with -h to see available options')
@@ -441,7 +524,6 @@ if __FILE__ == $0
   end
 
   trac = Trac.new(db)
-  migrator = Migrator.new(trac, cfg['github'], cfg['users'], cfg['labels'],
-                          opts[:deduplicate])
+  migrator = Migrator.new(trac, cfg['github'], cfg['labels'], opts[:deduplicate])
   migrator.migrate(opts[:start])
 end
