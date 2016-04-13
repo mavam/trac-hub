@@ -36,7 +36,7 @@ class GracefulQuit
 end
 
 class Migrator
-  def initialize(trac, github, users, labels, deduplicate)
+  def initialize(trac, github, users, labels, deduplicate, obfuscate)
     @trac = trac
     repo = github['repo']
     logins = github['logins']
@@ -71,6 +71,7 @@ class Migrator
     if @last_created_issue == nil
         @last_created_issue = 0
     end
+    @obfuscate = obfuscate
     $logger.info("Last created issue on GitHub is '#{@last_created_issue}'")
   end
 
@@ -333,10 +334,12 @@ class Migrator
           author = "anonymous" if author == "openticket"
 
           # Obfuscate email addresses: replace '@' and '.'
-          author.gsub!('@', ' AT ')
-          author.gsub!('.', ' DOT ')
-          author.gsub!('-', ' DASH ')
-          author.gsub!('com', ' COOM ')
+          if @obfuscate
+            author.gsub!('@', ' AT ')
+            author.gsub!('.', ' DOT ')
+            author.gsub!('-', ' DASH ')
+            author.gsub!('com', ' COOM ')
+          end
 
           extra = "#{extra} by _#{author}_"
         end
@@ -512,6 +515,9 @@ class Options < Hash
       opts.on('-s', '--start-at ID', 'start migration from ticket with number <ID>') do |id|
         self[:start] = id
       end
+      opts.on('-o', '--obfuscate', 'obfuscate inserted email addresses') do |ob|
+        self[:obfuscate] = ob
+      end
       opts.on('-v', '--verbose', 'be verbose') do |v|
         self[:verbose] = v
       end
@@ -561,6 +567,6 @@ if __FILE__ == $0
   end
 
   trac = Trac.new(db)
-  migrator = Migrator.new(trac, cfg['github'], cfg['users'], cfg['labels'], opts[:deduplicate])
+  migrator = Migrator.new(trac, cfg['github'], cfg['users'], cfg['labels'], opts[:deduplicate], opts[:obfuscate])
   migrator.migrate(opts[:start])
 end
