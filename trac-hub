@@ -123,11 +123,7 @@ class Migrator
   def migrate_tickets(start_ticket)
     $logger.info('migrating issues')
     # We match the issue title to determine whether an issue exists already.
-    total_tickets = @trac.tickets.count
     @trac.tickets.order(:id).where{id >= start_ticket}.all.each do |ticket|
-      # FIXME: needs porting to multi-user scenario.
-      #total_tickets -= 1
-      #rate_check(100) if total_tickets % 100 == 0
       title = ticket[:summary]
       if @issues and @issues.has_key?(title)
         $logger.warn("skipping existing issue '#{title}'")
@@ -270,14 +266,6 @@ class Migrator
     return issue
   end
 
-  def rate_check(client, bound, seconds=30)
-    limit, remaining = client.rate_limit
-    $logger.debug("#{remaining}/#{limit} operations available")
-    while remaining < bound
-      $logger.info("less than #{bound} operations viable, sleeping...")
-      sleep(seconds)
-    end
-  end
 
   def markdownify(author, str, created_at=nil, updated_at=nil)
     # Line endings
@@ -355,20 +343,24 @@ class GitHub
   end
 
   def collaborators
+    rate_check
     @client.collaborators(@repo)
   end
 
   def list_milestones
+    rate_check
     open = @client.list_milestones(@repo, :state => 'open')
     closed = @client.list_milestones(@repo, :state => 'closed')
     open + closed
   end
 
   def issue(*args)
+    rate_check
     @client.issue(@repo, *args)
   end
 
   def create_milestone(*args)
+    rate_check
     @client.create_milestone(@repo, *args)
   end
 
@@ -376,6 +368,7 @@ class GitHub
     $logger.debug("#{@user} fetches all open issues in #{@repo}")
     open = fetch_pagewise { |i| @client.list_issues(@repo, :page => i) }
     closed = fetch_pagewise do |i|
+      rate_check
       @client.list_issues(@repo, {:state => 'closed', :page => i})
     end
     open + closed
@@ -388,14 +381,17 @@ class GitHub
       $logger.warn("truncating issue '#{args[0]}' (#{args[1].size} bytes)")
       args[1] = args[1][0, 65300] + msg
     end
+    rate_check
     @client.create_issue(@repo, *args)
   end
 
   def update_issue(*args)
+    rate_check
     @client.update_issue(@repo, *args)
   end
 
   def close_issue(*args)
+    rate_check
     begin
       @client.close_issue(@repo, *args)
     rescue
@@ -404,6 +400,7 @@ class GitHub
   end
 
   def reopen_issue(*args)
+    rate_check
     begin
       @client.reopen_issue(@repo, *args)
     rescue
@@ -412,15 +409,13 @@ class GitHub
   end
 
   def add_comment(*args)
+    rate_check
     @client.add_comment(@repo, *args)
   end
 
   def update_issue_opts(issue, opts)
+    rate_check
     update_issue(issue[:number], issue[:title], issue[:body], opts)
-  end
-
-  def rate_limit
-    [@client.rate_limit, @client.rate_limit_remaining]
   end
 
   def emails(opts = {})
@@ -448,6 +443,17 @@ class GitHub
     $logger.debug("fetched #{result.size} elements")
     result
   end
+
+  def rate_check
+    limit = @client.rate_limit.limit
+    remaining = @client.rate_limit.remaining
+    $logger.debug("#{remaining}/#{limit} operations available. Resets in: #{@client.rate_limit.resets_in}s")
+    while @client.rate_limit.remaining < 100
+      $logger.info("less than #{bound} operations viable, sleeping (#{@client.rate_limit.resets_in}s)...")
+      sleep(10)
+    end
+  end
+
 end
 
 class Options < Hash
