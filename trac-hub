@@ -194,9 +194,12 @@ class Migrator
       return client.update_issue_opts(issue, :milestone => ms)
     when 'owner'
       owner = client.login
-      return issue unless (owner and @collaborators.include?(owner))
-      $logger.debug("issue #{i}: updating assignee to '#{owner}'")
-      return client.update_issue_opts(issue, :assignee => owner)
+      if owner and @collaborators.include?(owner)
+        $logger.debug("issue #{i}: updating assignee to '#{owner}'")
+        return client.update_issue_opts(issue, :assignee => owner)
+      else
+        $logger.info("WARNING: '#{owner}' not configured as collaborator")
+      end
     when 'status'
       case value
       when 'closed'
