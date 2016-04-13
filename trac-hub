@@ -228,7 +228,17 @@ class Migrator
         created_at = Time.at(ticket[:time] / 1e6, ticket[:time] % 1e6)
         updated_at = Time.at(ticket[:changetime] / 1e6, ticket[:changetime] % 1e6)
       end
-      body = markdownify(author, client, value, created_at, updated_at)
+      # we have to see if the old body contains anything we have to
+      # keep in the new body
+      if not issue[:body].empty?
+        body = markdownify(nil, value, created_at, updated_at)
+        issue_author = issue[:body].scan(/(\*\*:bust_in_silhouette: Originally .*\*\*\n<hr>\n).*/)
+        if not issue_author.empty?
+          body.insert(0, "#{issue_author.last.first}")
+        end
+      else
+        body = markdownify(author, value, created_at, updated_at)
+      end
       return client.update_issue(i, issue[:title], body)
     when /resolution|priority|component|type|version/
       old_labs = issue[:labels].map { |l| l[:name] }
@@ -266,7 +276,7 @@ class Migrator
       if updated
         created_at = Time.at(updated / 1e6, updated % 1e6)
       end
-      body = markdownify(author, client, value, created_at)
+      body = markdownify(author, value, created_at)
       begin
         client.add_comment(i, body)
       rescue
@@ -277,7 +287,7 @@ class Migrator
     return issue
   end
 
-  def markdownify(author, client, str, created_at=nil, updated_at=nil)
+  def markdownify(author, str, created_at=nil, updated_at=nil)
     # Line endings
     str.gsub!("\r\n", "\n")
     # Code
@@ -313,35 +323,35 @@ class Migrator
       if not str_author.empty?
         author = str_author.last.first
       end
-    end
-    extra = ":bust_in_silhouette: Originally"
-    if not @clients.has_key?(author)
-      if @users.has_key?(author)
-        author = @users[author]
-        extra = "#{extra} by @#{author}"
+      extra = ":bust_in_silhouette: Originally"
+      if not @clients.has_key?(author)
+        if @users.has_key?(author)
+          author = @users[author]
+          extra = "#{extra} by @#{author}"
+        else
+          ## PYINSTALLER SPECIAL
+          author = "anonymous" if author == "openticket"
+
+          # Obfuscate email addresses: replace '@' and '.'
+          author.gsub!('@', ' AT ')
+          author.gsub!('.', ' DOT ')
+          author.gsub!('-', ' DASH ')
+          author.gsub!('com', ' COOM ')
+
+          extra = "#{extra} by _#{author}_"
+        end
+      end
+      if created_at
+        extra = "#{extra} on #{created_at.strftime("%Y-%m-%d %H:%M:%S %z")}"
       else
-        ## PYINSTALLER SPECIAL
-        author = "anonymous" if author == "openticket"
-
-        # Obfuscate email addresses: replace '@' and '.'
-        author.gsub!('@', ' AT ')
-        author.gsub!('.', ' DOT ')
-        author.gsub!('-', ' DASH ')
-        author.gsub!('com', ' COOM ')
-
-        extra = "#{extra} by _#{author}_"
+        if updated_at
+          extra = "#{extra} updated on #{created_at.strftime("%Y-%m-%d %H:%M:%S %z")}"
+        end
       end
-    end
-    if created_at
-      extra = "#{extra} on #{created_at.strftime("%Y-%m-%d %H:%M:%S %z")}"
-    else
-      if updated_at
-        extra = "#{extra} updated on #{created_at.strftime("%Y-%m-%d %H:%M:%S %z")}"
-      end
-    end
 
-    unless extra.empty?
-      str.insert(0, "**#{extra}**\n<hr>\n")
+      unless extra.empty?
+        str.insert(0, "**#{extra}**\n<hr>\n")
+      end
     end
     # strip sf.net conversion markers
     str.gsub!(/^----\nMoved from SF.*\n*.*$/, '')
