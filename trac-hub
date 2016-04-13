@@ -36,7 +36,7 @@ class GracefulQuit
 end
 
 class Migrator
-  def initialize(trac, github, labels, deduplicate)
+  def initialize(trac, github, users, labels, deduplicate)
     @trac = trac
     repo = github['repo']
     logins = github['logins']
@@ -57,6 +57,7 @@ class Migrator
       end
     end
 
+    @users = Hash[users]
     @collaborators = @default.collaborators.map { |c| c[:login] }
     @labels = Hash[labels.map { |cat, rx| [cat, rx.map { |f, t| [Regexp.new('^' + f + '$'), t] }] }]
     @milestones = Hash[@default.list_milestones.map { |m| [m[:title], m[:number]] }]
@@ -227,7 +228,7 @@ class Migrator
         created_at = Time.at(ticket[:time] / 1e6, ticket[:time] % 1e6)
         updated_at = Time.at(ticket[:changetime] / 1e6, ticket[:changetime] % 1e6)
       end
-      body = markdownify(author, value, created_at, updated_at)
+      body = markdownify(author, client, value, created_at, updated_at)
       return client.update_issue(i, issue[:title], body)
     when /resolution|priority|component|type|version/
       old_labs = issue[:labels].map { |l| l[:name] }
@@ -265,7 +266,7 @@ class Migrator
       if updated
         created_at = Time.at(updated / 1e6, updated % 1e6)
       end
-      body = markdownify(author, value, created_at)
+      body = markdownify(author, client, value, created_at)
       begin
         client.add_comment(i, body)
       rescue
@@ -276,7 +277,7 @@ class Migrator
     return issue
   end
 
-  def markdownify(author, str, created_at=nil, updated_at=nil)
+  def markdownify(author, client, str, created_at=nil, updated_at=nil)
     # Line endings
     str.gsub!("\r\n", "\n")
     # Code
@@ -305,25 +306,40 @@ class Migrator
     # Ticket
     str.gsub!(/ticket:(\d+)/, '#\1')
     # Authorship & times
+    if author
+      # we search for "Original poster" and identify the real
+      # author of the ticket
+      str_author = str.scan(/Original poster: (.*)/)
+      if not str_author.empty?
+        author = str_author.last.first
+      end
+    end
     extra = ":bust_in_silhouette: Originally"
     if not @clients.has_key?(author)
-      ## PYINSTALLER SPECIAL
-      author = "anonymous" if author == "openticket"
+      if @users.has_key?(author)
+        author = @users[author]
+        extra = "#{extra} by @#{author}"
+      else
+        ## PYINSTALLER SPECIAL
+        author = "anonymous" if author == "openticket"
 
-      # Obfuscate email addresses: replace '@' and '.'
-      author.gsub!('@', ' AT ')
-      author.gsub!('.', ' DOT ')
-      author.gsub!('-', ' DASH ')
-      author.gsub!('com', ' COOM ')
+        # Obfuscate email addresses: replace '@' and '.'
+        author.gsub!('@', ' AT ')
+        author.gsub!('.', ' DOT ')
+        author.gsub!('-', ' DASH ')
+        author.gsub!('com', ' COOM ')
 
-      extra = "#{extra} by _#{author}_"
+        extra = "#{extra} by _#{author}_"
+      end
     end
     if created_at
       extra = "#{extra} on #{created_at.strftime("%Y-%m-%d %H:%M:%S %z")}"
-      #if updated_at and updated_at != created_at
-      #  extra = "#{extra} (modified on: #{updated_at.strftime("%Y-%m-%d")})"
-      #end
+    else
+      if updated_at
+        extra = "#{extra} updated on #{created_at.strftime("%Y-%m-%d %H:%M:%S %z")}"
+      end
     end
+
     unless extra.empty?
       str.insert(0, "**#{extra}**\n<hr>\n")
     end
@@ -535,6 +551,6 @@ if __FILE__ == $0
   end
 
   trac = Trac.new(db)
-  migrator = Migrator.new(trac, cfg['github'], cfg['labels'], opts[:deduplicate])
+  migrator = Migrator.new(trac, cfg['github'], cfg['users'], cfg['labels'], opts[:deduplicate])
   migrator.migrate(opts[:start])
 end

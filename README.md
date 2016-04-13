@@ -57,6 +57,12 @@ The section `labels` allows for custom label mappings. Since github's issue
 tracker does not have a first-class notion of ticket priority, type, and
 version information, trac-hub supports expressing these in the form of labels. 
 
+The section `users` contains a one-to-one mapping between trac usernames or
+email addresses and github usernames for users for which no github credentials
+are known or can't be used and are thus not stored in the `github` section. As
+soon as you have the login credentials for a user please use the `github`
+`logins` section in the config instead.
+
 License
 -------
 
