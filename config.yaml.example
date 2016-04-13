@@ -5,9 +5,9 @@ trac:
 github:
   repo: 'mavam/test'
   logins:
-    - ['mavam', 'pass']
-    - ['collaborator1', 'pass']
-    - ['collaborator2', 'pass']
+    - ['mavam', 'pass', ['mavam@github.com', 'mail@mavam.com']]
+    - ['collaborator1', 'pass', ['email@mydomain.com‘, 'alias']]
+    - ['collaborator2', 'pass', ['email@myname.com', 'aliasname']]
  
 labels:
   priority:

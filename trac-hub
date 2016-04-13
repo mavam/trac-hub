@@ -40,17 +40,20 @@ class Migrator
     @trac = trac
     repo = github['repo']
     logins = github['logins']
-    first = logins.shift
-    @clients = Hash.new(GitHub.new(first[0], first[1], repo))
-    @default = @clients[nil]
     $logger.info('Retrieving e-mails for users with a valid login')
     logins.each do |user, pass, emails|
       client = GitHub.new(user, pass, repo)
+      # Map first user to @default
+      if @clients == nil
+        @clients = Hash.new(client)
+        @default = @clients[nil]
+      end
       # Map user name to client object.
       @clients[user] = client
       # Map emails from config.yaml to login objects.
       emails.each do |mail|
-          @clients[mail] = client
+        $logger.debug("Mapping '#{mail}' to '#{client.login}'")
+        @clients[mail] = client
       end
     end
 
@@ -145,11 +148,15 @@ class Migrator
         # wait for user input
         gets.chomp
       rescue
-        $logger.info("creating new ticket #{ticket[:id]}")
         author = trac_mail(ticket[:reporter])
+        if author != ticket[:reporter]
+          $logger.info("creating new ticket #{ticket[:id]} (#{ticket[:reporter]} => #{author})")
+        else
+          $logger.info("creating new ticket #{ticket[:id]} (#{author})")
+        end
         issue = @clients[author].create_issue(title, '')
         sleep 0.2
-        $logger.info("created issue ##{issue[:number]} for ticket #{ticket[:id]} (#{author})")
+        $logger.info("created issue ##{issue[:number]} for ticket #{ticket[:id]}")
       end
 
       @issues[title] = issue if @issues
