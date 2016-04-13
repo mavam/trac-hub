@@ -318,7 +318,7 @@ class Migrator
       #end
     end
     unless extra.empty?
-      str.insert(0, "**#{extra}**\n\n")
+      str.insert(0, "**#{extra}**\n<hr>\n")
     end
     str
   end
