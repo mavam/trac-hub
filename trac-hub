@@ -353,6 +353,21 @@ class Migrator
       unless extra.empty?
         str.insert(0, "**#{extra}**\n<hr>\n")
       end
+
+      # Reply
+      str_replyto = str.scan(/Replying to \[.*:.* (.*)\]:/)
+      if not str_replyto.empty?
+        replyto = str_replyto.last.first
+        user = nil
+        if @users.has_key?(replyto)
+          user = @users[replyto]
+        end
+        if user and not user.empty?
+          str.gsub!(/Replying to \[.*:.* (.*)\]:/, "@#{user}")
+        else
+          str.gsub!(/Replying to \[.*:.* (.*)\]:/, 'Replying to \1:')
+        end
+      end
     end
     # strip sf.net conversion markers
     str.gsub!(/^----\nMoved from SF.*\n*.*$/, '')
