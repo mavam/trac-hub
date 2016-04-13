@@ -148,7 +148,8 @@ class Migrator
         gets.chomp
       rescue
         $logger.info("creating new ticket #{ticket[:id]}")
-        issue = @clients[@users[ticket[:reporter]]].create_issue(title, '')
+        author = trac_mail(ticket[:reporter])
+        issue = @clients[author].create_issue(title, '')
         sleep 0.2
         $logger.info("created issue ##{issue[:number]} for ticket #{ticket[:id]}")
       end
@@ -170,11 +171,11 @@ class Migrator
 
       [:description, :owner, :milestone, :type,
        :component, :priority, :version, :resolution].map do |cat|
-        issue = change_issue(issue, ticket[:reporter], cat.to_s, ticket[cat], ticket)
+        issue = change_issue(issue, author, cat.to_s, ticket[cat], ticket)
       end
       $logger.debug('replaying ticket history')
       @trac.changes.where(:ticket => ticket[:id]).each do |chg|
-        issue = change_issue(issue, chg[:author], chg[:field], chg[:newvalue], nil, chg[:time])
+        issue = change_issue(issue, trac_mail(chg[:author]), chg[:field], chg[:newvalue], nil, chg[:time])
         sleep 0.2
       end
       $logger.info("migrated ticket #{ticket[:id]}")
@@ -306,25 +307,17 @@ class Migrator
     str.gsub!(/ticket:(\d+)/, '#\1')
     # Authorship & times
     extra = "Originally"
-    user = @users[author]
-    if not @clients.has_key?(user)
+    if not @clients.has_key?(author)
       ## PYINSTALLER SPECIAL
       author = "anonymous" if author == "openticket"
-      if user != author
-        author = "#{author}"
-        if user
-          author += " (@#{user})"
-        end
-      end
 
       # Obfuscate email addresses: replace '@' and '.'
-      author.gsub!('@', ' AND ')
+      author.gsub!('@', ' AT ')
       author.gsub!('.', ' DOT ')
       author.gsub!('-', ' DASH ')
       author.gsub!('com', ' COOM ')
- 
-      reporter = user ? "[#{author}](https://github.com/#{user})" : author
-      extra = "#{extra} by *#{reporter}*"
+
+      extra = "#{extra} by *#{author}*"
     end
     if created_at
       extra = "#{extra} on #{created_at.strftime("%Y-%m-%d")}"
@@ -335,7 +328,6 @@ class Migrator
     unless extra.empty?
       str.insert(0, "#{extra}\n\n")
     end
-    str.insert(0, "#{header}\n")
     str
   end
 end
