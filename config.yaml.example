@@ -30,3 +30,6 @@ labels:
     - ['Duplicate', 'duplicate']
     - ['Works for Me', 'works for me']
 
+users:
+  - [matthias, mavam]
+  - [vallenti, mavam]
