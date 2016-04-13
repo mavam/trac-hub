@@ -153,7 +153,7 @@ class Migrator
         author = trac_mail(ticket[:reporter])
         issue = @clients[author].create_issue(title, '')
         sleep 0.2
-        $logger.info("created issue ##{issue[:number]} for ticket #{ticket[:id]}")
+        $logger.info("created issue ##{issue[:number]} for ticket #{ticket[:id]} (#{author})")
       end
 
       @issues[title] = issue if @issues
