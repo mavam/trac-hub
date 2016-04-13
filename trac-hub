@@ -109,7 +109,9 @@ class Migrator
         end
         opts[:due_on] = t.to_time
       rescue
-        $logger.warn("ignoring milestone date '#{milestone[:due]}'")
+        if not milestone[:due].is_a? Numeric or milestone[:due] > 0
+          $logger.warn("ignoring milestone date '#{milestone[:due]}'")
+        end
       end
       $logger.info("creating new milestone #{name}")
       ms = @default.create_milestone(name, opts)
