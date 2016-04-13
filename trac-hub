@@ -157,7 +157,6 @@ class Migrator
           $logger.info("creating new ticket #{ticket[:id]} (#{author})")
         end
         issue = @clients[author].create_issue(title, '')
-        sleep 0.2
         $logger.info("created issue ##{issue[:number]} for ticket #{ticket[:id]}")
       end
 
@@ -183,7 +182,6 @@ class Migrator
       $logger.debug('replaying ticket history')
       @trac.changes.where(:ticket => ticket[:id]).each do |chg|
         issue = change_issue(issue, trac_mail(chg[:author]), chg[:field], chg[:newvalue], nil, chg[:time])
-        sleep 0.2
       end
       $logger.info("migrated ticket #{ticket[:id]}")
       @last_created_issue = issue[:number]
@@ -380,6 +378,7 @@ class GitHub
     $logger.debug("#{@user} connects to github repo '#{repo}'")
     @client = Octokit::Client.new(:login => @user, :password => pass)
     @repo = repo
+    @num_api_calls = 0
   end
 
   def collaborators
@@ -421,36 +420,62 @@ class GitHub
       $logger.warn("truncating issue '#{args[0]}' (#{args[1].size} bytes)")
       args[1] = args[1][0, 65300] + msg
     end
-    rate_check
-    @client.create_issue(@repo, *args)
+    begin
+      rate_check
+      @client.create_issue(@repo, *args)
+    rescue Octokit::AbuseDetected
+      $logger.warn("WARNING: Github abuse detection fired, retry in 5 min...")
+      sleep 5*60
+      retry
+    end
   end
 
   def update_issue(*args)
-    rate_check
-    @client.update_issue(@repo, *args)
+    begin
+      rate_check
+      @client.update_issue(@repo, *args)
+    rescue Octokit::AbuseDetected
+      $logger.warn("WARNING: Github abuse detection fired, retry in 5 min...")
+      sleep 5*60
+      retry
+    end
   end
 
   def close_issue(*args)
-    rate_check
     begin
+      rate_check
       @client.close_issue(@repo, *args)
+    rescue Octokit::AbusedDetected
+      $logger.warn("WARNING: Github abuse detection fired, retry in 5 min...")
+      sleep 5*60
+      retry
     rescue
       $logger.info("!!! can't close issue '#{args[0]}'")
     end
   end
 
   def reopen_issue(*args)
-    rate_check
     begin
+      rate_check
       @client.reopen_issue(@repo, *args)
+    rescue Octokit::AbusedDetected
+      $logger.warn("WARNING: Github abuse detection fired, retry in 5 min...")
+      sleep 5*60
+      retry
     rescue
       $logger.info("!!! can't reopen issue '#{args[0]}'")
     end
   end
 
   def add_comment(*args)
-    rate_check
-    @client.add_comment(@repo, *args)
+    begin
+      rate_check
+      @client.add_comment(@repo, *args)
+    rescue Octokit::AbusedDetected
+      $logger.warn("WARNING: Github abuse detection fired, retry in 5 min...")
+      sleep 5*60
+      retry
+    end
   end
 
   def update_issue_opts(issue, opts)
@@ -490,8 +515,14 @@ class GitHub
     $logger.debug("#{remaining}/#{limit} operations available. Resets in: #{@client.rate_limit.resets_in}s")
     while @client.rate_limit.remaining < 100
       $logger.info("less than #{bound} operations viable, sleeping (#{@client.rate_limit.resets_in}s)...")
-      sleep(10)
+      sleep 10
     end
+    if @num_api_calls > 200
+      $logger.info("maximum number of Github API calls reached. Sleeping 1 min...")
+      sleep 1*60
+      @num_api_calls = 0
+    end
+    @num_api_calls += 1
   end
 
 end
