@@ -269,7 +269,6 @@ class Migrator
     return issue
   end
 
-
   def markdownify(author, str, created_at=nil, updated_at=nil)
     # Line endings
     str.gsub!("\r\n", "\n")
@@ -299,7 +298,7 @@ class Migrator
     # Ticket
     str.gsub!(/ticket:(\d+)/, '#\1')
     # Authorship & times
-    extra = "Originally"
+    extra = ":bust_in_silhouette: Originally"
     if not @clients.has_key?(author)
       ## PYINSTALLER SPECIAL
       author = "anonymous" if author == "openticket"
@@ -313,13 +312,13 @@ class Migrator
       extra = "#{extra} by *#{author}*"
     end
     if created_at
-      extra = "#{extra} on #{created_at.strftime("%Y-%m-%d")}"
+      extra = "#{extra} on #{created_at.strftime("%Y-%m-%d %H:%M:%S %z")}"
       #if updated_at and updated_at != created_at
       #  extra = "#{extra} (modified on: #{updated_at.strftime("%Y-%m-%d")})"
       #end
     end
     unless extra.empty?
-      str.insert(0, "#{extra}\n\n")
+      str.insert(0, "**#{extra}**\n\n")
     end
     str
   end
