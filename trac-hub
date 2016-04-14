@@ -181,7 +181,7 @@ class Migrator
           issue = change_issue(issue, author, cat.to_s, ticket[cat], ticket)
         end
       end
-      $logger.debug('replaying ticket history')
+      $logger.info('replaying ticket history')
       @trac.changes.where(:ticket => ticket[:id]).each do |chg|
         issue = change_issue(issue, trac_mail(chg[:author]), chg[:field], chg[:newvalue], nil, chg[:time])
       end
@@ -199,12 +199,12 @@ class Migrator
     when 'milestone'
       ms = @milestones[value]
       return issue unless ms
-      $logger.debug("issue #{i}: updating milestone to '#{ms}'")
+      $logger.info("issue #{i}: updating milestone to '#{value}'")
       return client.update_issue_opts(issue, :milestone => ms)
     when 'owner'
       owner = client.login
       if owner and @collaborators.include?(owner)
-        $logger.debug("issue #{i}: updating assignee to '#{owner}'")
+        $logger.info("issue #{i}: updating assignee to '#{owner}'")
         return client.update_issue_opts(issue, :assignee => owner)
       else
         $logger.warn("'#{owner}' not configured as collaborator")
@@ -212,17 +212,17 @@ class Migrator
     when 'status'
       case value
       when 'closed'
-        $logger.debug("issue #{i}: closing")
+        $logger.info("issue #{i}: closing")
         return client.close_issue(i)
       when 'reopened'
-        $logger.debug("issue #{i}: reopening")
+        $logger.info("issue #{i}: reopening")
         return client.reopen_issue(i)
       end
     when 'summary'
-      $logger.debug("issue #{i}: updating title to '#{value}'")
+      $logger.info("issue #{i}: updating title to '#{value}'")
       return client.update_issue(i, value, issue[:body])
     when 'description'
-      $logger.debug("issue #{i}: updating body")
+      $logger.info("issue #{i}: updating issue description")
       created_at=nil
       updated_at=nil
       if ticket
@@ -254,23 +254,24 @@ class Migrator
         $logger.error("issue #{i}: more than one match for '#{value}' in '#{category}'")
         exit 1
       end
-      new_labs = old_labs.reject { |lab| f.find { |pat, rep| pat.match(lab) } }
+      new_labs = old_labs.reject { |lab| f.find { |pat, rep| rep == lab } }
       if old_labs.size != new_labs.size
-        $logger.debug("issue #{i}: removed existing labels in '#{category}'")
+        $logger.info("issue #{i}: replacing all '#{category}' labels by '#{t[0][1]}'")
       end
       new_label = t[0][1]
       return issue if new_label.empty?
-      $logger.debug("issue #{i}: adding label '#{new_label}'")
+      $logger.info("issue #{i}: adding label '#{new_label}'")
       new_labs << new_label
       new_labs_set = Set.new new_labs
       $logger.debug("issue #{i}: updating lables to #{new_labs}")
       return client.update_issue_opts(issue, :labels => new_labs_set.to_a)
     when /comment|changelog/
       return issue if value.empty? || value =~ /Milestone.*deleted/
+      $logger.info("issue #{i}: adding comment by '#{author}'")
       max_len = 30
       excerpt = value[0, max_len].gsub(/\n|\r/, ' ')
       excerpt << '...' if value.size > max_len
-      $logger.debug("issue #{i}: adding comment '#{excerpt}'")
+      $logger.debug("issue #{i}: comment '#{excerpt}'")
       created_at=nil
       if updated
         created_at = Time.at(updated / 1e6, updated % 1e6)
