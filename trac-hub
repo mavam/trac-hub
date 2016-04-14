@@ -137,7 +137,7 @@ class Migrator
 
       while @last_created_issue+1 < ticket[:id]
         # Create empty ticket to not lose the numbering
-        issue = @default.create_issue('prazdny', '')
+        issue = @default.create_issue('empty', '')
         @default.close_issue(issue[:number])
         raise RuntimeError unless @last_created_issue+1 == issue[:number]
         @last_created_issue = issue[:number]
@@ -176,8 +176,10 @@ class Migrator
       end
 
       [:description, :owner, :milestone, :type,
-       :component, :priority, :version, :resolution].map do |cat|
-        issue = change_issue(issue, author, cat.to_s, ticket[cat], ticket)
+       :component, :priority, :version, :resolution, :severity, :platform].map do |cat|
+        if ticket[cat]
+          issue = change_issue(issue, author, cat.to_s, ticket[cat], ticket)
+        end
       end
       $logger.debug('replaying ticket history')
       @trac.changes.where(:ticket => ticket[:id]).each do |chg|
@@ -205,7 +207,7 @@ class Migrator
         $logger.debug("issue #{i}: updating assignee to '#{owner}'")
         return client.update_issue_opts(issue, :assignee => owner)
       else
-        $logger.info("WARNING: '#{owner}' not configured as collaborator")
+        $logger.warn("'#{owner}' not configured as collaborator")
       end
     when 'status'
       case value
@@ -239,12 +241,14 @@ class Migrator
         body = markdownify(author, value, created_at, updated_at)
       end
       return client.update_issue(i, issue[:title], body)
-    when /resolution|priority|component|type|version/
+    when /resolution|priority|component|type|version|severity|platform/
       old_labs = issue[:labels].map { |l| l[:name] }
       return issue unless @labels.has_key?(category)
       t, f = @labels[category].partition { |pat, rep| pat.match(value) }
       if t.empty?
-        $logger.warn("issue #{i}: no match for label '#{value}' in '#{category}'")
+        if not value.empty?
+          $logger.warn("issue #{i}: no match for label '#{value}' in '#{category}'")
+        end
         return issue
       elsif t.size > 1
         $logger.error("issue #{i}: more than one match for '#{value}' in '#{category}'")
@@ -260,12 +264,8 @@ class Migrator
       new_labs << new_label
       new_labs_set = Set.new new_labs
       $logger.debug("issue #{i}: updating lables to #{new_labs}")
-      begin
-        return client.update_issue_opts(issue, :labels => new_labs_set.to_a)
-      rescue
-        $logger.error("issue #{i}: problem with saving labels '#{new_labs}'")
-      end
-    when 'comment'
+      return client.update_issue_opts(issue, :labels => new_labs_set.to_a)
+    when /comment|changelog/
       return issue if value.empty? || value =~ /Milestone.*deleted/
       max_len = 30
       excerpt = value[0, max_len].gsub(/\n|\r/, ' ')
@@ -275,12 +275,11 @@ class Migrator
       if updated
         created_at = Time.at(updated / 1e6, updated % 1e6)
       end
-      body = markdownify(author, value, created_at)
-      begin
-        client.add_comment(i, body)
-      rescue
-        $logger.error("issue #{i}: problem with saving comment: Originally by #{author} '#{body}'")
+      if category == 'changelog'
+        value.insert(0, "**Release Note:**\n")
       end
+      body = markdownify(author, value, created_at)
+      client.add_comment(i, body)
     when /keywords|cc|reporter/ # TODO
     end
     return issue
@@ -393,7 +392,6 @@ class GitHub
     $logger.debug("#{@user} connects to github repo '#{repo}'")
     @client = Octokit::Client.new(:login => @user, :password => pass)
     @repo = repo
-    @num_api_calls = 0
   end
 
   def collaborators
@@ -439,9 +437,11 @@ class GitHub
       rate_check
       @client.create_issue(@repo, *args)
     rescue Octokit::AbuseDetected
-      $logger.warn("WARNING: Github abuse detection fired, retry in 5 min...")
+      $logger.warn("Github abuse detection triggerd, retry in 5 min...")
       sleep 5*60
       retry
+    rescue
+      $logger.error("issue #{args[0]}: problem creating issue.")
     end
   end
 
@@ -450,9 +450,11 @@ class GitHub
       rate_check
       @client.update_issue(@repo, *args)
     rescue Octokit::AbuseDetected
-      $logger.warn("WARNING: Github abuse detection fired, retry in 5 min...")
+      $logger.warn("Github abuse detection triggered, retry in 5 min...")
       sleep 5*60
       retry
+    rescue
+      $logger.error("issue #{args[0]}: problem updating issue.")
     end
   end
 
@@ -461,11 +463,11 @@ class GitHub
       rate_check
       @client.close_issue(@repo, *args)
     rescue Octokit::AbusedDetected
-      $logger.warn("WARNING: Github abuse detection fired, retry in 5 min...")
+      $logger.warn("Github abuse detection triggered, retry in 5 min...")
       sleep 5*60
       retry
     rescue
-      $logger.info("!!! can't close issue '#{args[0]}'")
+      $logger.error("issue #{args[0]}: can't close issue.")
     end
   end
 
@@ -474,11 +476,11 @@ class GitHub
       rate_check
       @client.reopen_issue(@repo, *args)
     rescue Octokit::AbusedDetected
-      $logger.warn("WARNING: Github abuse detection fired, retry in 5 min...")
+      $logger.warn("Github abuse detection triggered, retry in 5 min...")
       sleep 5*60
       retry
     rescue
-      $logger.info("!!! can't reopen issue '#{args[0]}'")
+      $logger.warn("issue #{args[0]}: can't reopen issue.")
     end
   end
 
@@ -487,14 +489,15 @@ class GitHub
       rate_check
       @client.add_comment(@repo, *args)
     rescue Octokit::AbusedDetected
-      $logger.warn("WARNING: Github abuse detection fired, retry in 5 min...")
+      $logger.warn("Github abuse detection triggered, retry in 5 min...")
       sleep 5*60
       retry
+    rescue
+      $logger.error("issue #{args[0]}: problem with saving comment.")
     end
   end
 
   def update_issue_opts(issue, opts)
-    rate_check
     update_issue(issue[:number], issue[:title], issue[:body], opts)
   end
 
@@ -532,12 +535,6 @@ class GitHub
       $logger.info("less than #{bound} operations viable, sleeping (#{@client.rate_limit.resets_in}s)...")
       sleep 10
     end
-    if @num_api_calls > 200
-      $logger.info("maximum number of Github API calls reached. Sleeping 1 min...")
-      sleep 1*60
-      @num_api_calls = 0
-    end
-    @num_api_calls += 1
   end
 
 end
