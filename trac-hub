@@ -147,8 +147,6 @@ class Migrator
       begin
         issue = @default.issue(ticket[:id])
         $logger.info("found ticket #{ticket[:id]}")
-        # wait for user input
-        gets.chomp
       rescue
         author = trac_mail(ticket[:reporter])
         if author != ticket[:reporter]
@@ -177,7 +175,7 @@ class Migrator
 
       [:description, :owner, :milestone, :type,
        :component, :priority, :version, :resolution, :severity, :platform].map do |cat|
-        if ticket[cat]
+        if ticket[cat] != nil
           issue = change_issue(issue, author, cat.to_s, ticket[cat], ticket)
         end
       end
@@ -233,7 +231,7 @@ class Migrator
       # keep in the new body
       if not issue[:body].empty?
         body = markdownify(nil, value, created_at, updated_at)
-        issue_author = issue[:body].scan(/(\*\*:bust_in_silhouette: Originally .*\*\*\n<hr>\n).*/)
+        issue_author = issue[:body].scan(/(\*\*Originally .*\*\*\n\n___\n).*/)
         if not issue_author.empty?
           body.insert(0, "#{issue_author.last.first}")
         end
@@ -246,7 +244,7 @@ class Migrator
       return issue unless @labels.has_key?(category)
       t, f = @labels[category].partition { |pat, rep| pat.match(value) }
       if t.empty?
-        if not value.empty?
+        if value and not value.empty?
           $logger.warn("issue #{i}: no match for label '#{value}' in '#{category}'")
         end
         return issue
@@ -266,8 +264,8 @@ class Migrator
       $logger.debug("issue #{i}: updating lables to #{new_labs}")
       return client.update_issue_opts(issue, :labels => new_labs_set.to_a)
     when /comment|changelog/
-      return issue if value.empty? || value =~ /Milestone.*deleted/
-      $logger.info("issue #{i}: adding comment by '#{author}'")
+      return issue if value == nil || value.empty? || value =~ /Milestone.*deleted/
+      $logger.info("issue #{i}: adding '#{category}' by '#{author}'")
       max_len = 30
       excerpt = value[0, max_len].gsub(/\n|\r/, ' ')
       excerpt << '...' if value.size > max_len
@@ -309,9 +307,12 @@ class Migrator
     str.gsub!(/(^\s+)\*/, '\1-')
     str.gsub!(/(^\s+)(\d)\./, '\1\2.')
     # Changeset
-    str.gsub!(/\[changeset:"?([^\]]+)\/invenio"?\]/, '\1')
+    str.gsub!(/\[changeset:"([^\]]+)" .*\]/, '\1')
     str.gsub!(/\[changeset:([^\]]+)\]/, '\1')
     str.gsub!(/changeset:([0-9a-f]+)/, '\1')
+    str.gsub!(/\(In \[(.*)\]\)/, '**In \1:**')
+    # Commit reference
+    str.gsub!(/^#CommitTicketReference.*\n/, '')
     # Ticket
     str.gsub!(/ticket:(\d+)/, '#\1')
     # Authorship & times
@@ -322,7 +323,7 @@ class Migrator
       if not str_author.empty?
         author = str_author.last.first
       end
-      extra = ":bust_in_silhouette: Originally"
+      extra = "Originally"
       if not @clients.has_key?(author)
         if @users.has_key?(author)
           author = @users[author]
@@ -351,7 +352,7 @@ class Migrator
       end
 
       unless extra.empty?
-        str.insert(0, "**#{extra}**\n<hr>\n")
+        str.insert(0, "**#{extra}**\n\n___\n")
       end
 
       # Reply
