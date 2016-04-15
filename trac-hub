@@ -36,7 +36,7 @@ class GracefulQuit
 end
 
 class Migrator
-  def initialize(trac, github, users, labels, deduplicate, obfuscate)
+  def initialize(trac, github, users, labels, deduplicate, obfuscate, revmap)
     @trac = trac
     repo = github['repo']
     logins = github['logins']
@@ -72,6 +72,7 @@ class Migrator
         @last_created_issue = 0
     end
     @obfuscate = obfuscate
+    @revmap = revmap
     $logger.info("Last created issue on GitHub is '#{@last_created_issue}'")
   end
 
@@ -93,6 +94,15 @@ class Migrator
     data = @trac.sessions.select(:value).where('name = "email" AND sid = ?', author)
     return (@trac_mails_cache[author] = data.first[:value]) if data.count == 1
     return (@trac_mails_cache[author] = author) # not found
+  end
+
+  # returns the git commit hash for a specified revision (using revmap hash)
+  def map_changeset(str)
+    if @revmap and @revmap.has_key?(str)
+      return "(#{@revmap[str].to_s})"
+    else
+      return str
+    end
   end
 
   def migrate_milestones
@@ -287,6 +297,9 @@ class Migrator
   def markdownify(author, str, created_at=nil, updated_at=nil)
     # Line endings
     str.gsub!("\r\n", "\n")
+    # CommitTicketReference
+    str.gsub!(/\{\{\{\n(#!CommitTicketReference .+?)\}\}\}/m, '\1')
+    str.gsub!(/#!CommitTicketReference .+\n/, '')
     # Code
     str.gsub!(/\{\{\{([^\n]+?)\}\}\}/, '`\1`')
     str.gsub!(/\{\{\{(.+?)\}\}\}/m, '```\1```')
@@ -307,12 +320,10 @@ class Migrator
     str.gsub!(/(^\s+)\*/, '\1-')
     str.gsub!(/(^\s+)(\d)\./, '\1\2.')
     # Changeset
-    str.gsub!(/\[changeset:"([^\]]+)" .*\]/, '\1')
-    str.gsub!(/\[changeset:([^\]]+)\]/, '\1')
-    str.gsub!(/changeset:([0-9a-f]+)/, '\1')
-    str.gsub!(/\(In \[(.*)\]\)/, '**In \1:**')
-    # Commit reference
-    str.gsub!(/^#CommitTicketReference.*\n/, '')
+    str.gsub!(/\[changeset:"([^\]]+)".*\]/) { map_changeset(Regexp.last_match[1]) }
+    str.gsub!(/\[changeset:([^\]]+)\]/) { map_changeset(Regexp.last_match[1]) }
+    str.gsub!(/changeset:([0-9a-f]+)/) { map_changeset(Regexp.last_match[1]) }
+    str.gsub!(/\(In \[(.*)\]\)/) { "In #{map_changeset(Regexp.last_match[1])}:\n" }
     # Ticket
     str.gsub!(/ticket:(\d+)/, '#\1')
     # Authorship & times
@@ -561,6 +572,10 @@ class Options < Hash
       opts.on('-o', '--obfuscate', 'obfuscate inserted email addresses') do |ob|
         self[:obfuscate] = ob
       end
+      opts.on('-r', '--rev-map-file FILE',
+              'allows to specify a commit revision mapping FILE') do |file|
+        self[:revmapfile] = file
+      end
       opts.on('-v', '--verbose', 'be verbose') do |v|
         self[:verbose] = v
       end
@@ -609,7 +624,29 @@ if __FILE__ == $0
     exit 1
   end
 
+  # load revision mapping file and convert it to a hash.
+  # This revmap file allows to map between SVN revisions (rXXXX)
+  # and git commit sha1 hashes.
+  if opts[:revmapfile]
+    revmap = Hash.new()
+    f = File.open(opts[:revmapfile], "r")
+    f.each_line do |line|
+      array = line.split(/\s+/)
+
+      # SVN revision can start with a 'rXXXX"
+      array[0].gsub!(/^r(.*)/, '\1')
+
+      # git commit sha can be striped down to 7 characters for
+      # proper reference in Github
+      array[1] = array[1].to_s[0...7]
+
+      # lets put this into the hash map
+      revmap[array[0]] = array[1]
+    end
+    f.close
+  end
+
   trac = Trac.new(db)
-  migrator = Migrator.new(trac, cfg['github'], cfg['users'], cfg['labels'], opts[:deduplicate], opts[:obfuscate])
+  migrator = Migrator.new(trac, cfg['github'], cfg['users'], cfg['labels'], opts[:deduplicate], opts[:obfuscate], revmap)
   migrator.migrate(opts[:start])
 end
