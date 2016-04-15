@@ -450,11 +450,11 @@ class GitHub
       rate_check
       @client.create_issue(@repo, *args)
     rescue Octokit::AbuseDetected
-      $logger.warn("issue #{args[0]}: Github abuse detection triggered. Retrying in 5 min...")
+      $logger.warn("issue #{args[0][:number]}: Github abuse detection triggered. Retrying in 5 min...")
       sleep 5*60
       retry
     rescue
-      $logger.error("issue #{args[0]}: problem creating issue.")
+      $logger.error("issue #{args[0][:number]}: problem creating issue.")
     end
   end
 
