@@ -220,92 +220,92 @@ class Migrator
     i = issue[:number]
     client = @clients[author]
     case category
-    when 'milestone'
-      ms = @milestones[value]
-      return issue unless ms
-      $logger.info("issue #{i}: updating milestone to '#{value}'")
-      return client.update_issue_opts(issue, :milestone => ms)
-    when 'owner'
-      owner = client.login
-      if owner and @collaborators.include?(owner)
-        $logger.info("issue #{i}: updating assignee to '#{owner}'")
-        return client.update_issue_opts(issue, :assignee => owner)
-      else
-        $logger.warn("'#{owner}' not configured as collaborator")
-      end
-    when 'status'
-      case value
-      when 'closed'
-        $logger.info("issue #{i}: closing")
-        return client.close_issue(i)
-      when 'reopened'
-        $logger.info("issue #{i}: reopening")
-        return client.reopen_issue(i)
-      end
-    when 'summary'
-      $logger.info("issue #{i}: updating title to '#{value}'")
-      return client.update_issue(i, value, issue[:body])
-    when 'description'
-      $logger.info("issue #{i}: updating issue description")
-      created_at=nil
-      updated_at=nil
-      if ticket
-        created_at = Time.at(ticket[:time] / 1e6, ticket[:time] % 1e6)
-        updated_at = Time.at(ticket[:changetime] / 1e6, ticket[:changetime] % 1e6)
-      end
-      # we have to see if the old body contains anything we have to
-      # keep in the new body
-      if not issue[:body].empty?
-        body = markdownify(nil, value, created_at, updated_at)
-        issue_author = issue[:body].scan(/(\*\*Originally .*\*\*\n\n___\n).*/)
-        if not issue_author.empty?
-          body.insert(0, "#{issue_author.last.first}")
+      when 'milestone'
+        ms = @milestones[value]
+        return issue unless ms
+        $logger.info("issue #{i}: updating milestone to '#{value}'")
+        return client.update_issue_opts(issue, :milestone => ms)
+      when 'owner'
+        owner = client.login
+        if owner and @collaborators.include?(owner)
+          $logger.info("issue #{i}: updating assignee to '#{owner}'")
+          return client.update_issue_opts(issue, :assignee => owner)
+        else
+          $logger.warn("'#{owner}' not configured as collaborator")
         end
-      else
-        body = markdownify(author, value, created_at, updated_at)
-      end
-      return client.update_issue(i, issue[:title], body)
-    when /resolution|priority|component|type|version|severity|platform/
-      old_labs = issue[:labels].map { |l| l[:name] }
-      return issue unless @labels.has_key?(category)
-      t, f = @labels[category].partition { |pat, rep| pat.match(value) }
-      if t.empty?
-        if value and not value.empty?
-          $logger.warn("issue #{i}: no match for label '#{value}' in '#{category}'")
+      when 'status'
+        case value
+        when 'closed'
+          $logger.info("issue #{i}: closing")
+          return client.close_issue(i)
+        when 'reopened'
+          $logger.info("issue #{i}: reopening")
+          return client.reopen_issue(i)
         end
-        return issue
-      elsif t.size > 1
-        $logger.error("issue #{i}: more than one match for '#{value}' in '#{category}'")
-        exit 1
-      end
-      new_labs = old_labs.reject { |lab| f.find { |pat, rep| rep == lab } }
-      if old_labs.size != new_labs.size
-        $logger.info("issue #{i}: replacing all '#{category}' labels by '#{t[0][1]}'")
-      end
-      new_label = t[0][1]
-      return issue if new_label.empty?
-      $logger.info("issue #{i}: adding label '#{new_label}'")
-      new_labs << new_label
-      new_labs_set = Set.new new_labs
-      $logger.debug("issue #{i}: updating lables to #{new_labs}")
-      return client.update_issue_opts(issue, :labels => new_labs_set.to_a)
-    when /comment|changelog/
-      return issue if value == nil || value.empty? || value =~ /Milestone.*deleted/
-      $logger.info("issue #{i}: adding '#{category}' by '#{author}'")
-      max_len = 30
-      excerpt = value[0, max_len].gsub(/\n|\r/, ' ')
-      excerpt << '...' if value.size > max_len
-      $logger.debug("issue #{i}: comment '#{excerpt}'")
-      created_at=nil
-      if updated
-        created_at = Time.at(updated / 1e6, updated % 1e6)
-      end
-      if category == 'changelog'
-        value.insert(0, "**Release Note:**\n")
-      end
-      body = markdownify(author, value, created_at)
-      client.add_comment(i, body)
-    when /keywords|cc|reporter/ # TODO
+      when 'summary'
+        $logger.info("issue #{i}: updating title to '#{value}'")
+        return client.update_issue(i, value, issue[:body])
+      when 'description'
+        $logger.info("issue #{i}: updating issue description")
+        created_at=nil
+        updated_at=nil
+        if ticket
+          created_at = Time.at(ticket[:time] / 1e6, ticket[:time] % 1e6)
+          updated_at = Time.at(ticket[:changetime] / 1e6, ticket[:changetime] % 1e6)
+        end
+        # we have to see if the old body contains anything we have to
+        # keep in the new body
+        if not issue[:body].empty?
+          body = markdownify(nil, value, created_at, updated_at)
+          issue_author = issue[:body].scan(/(\*\*Originally .*\*\*\n\n___\n).*/)
+          if not issue_author.empty?
+            body.insert(0, "#{issue_author.last.first}")
+          end
+        else
+          body = markdownify(author, value, created_at, updated_at)
+        end
+        return client.update_issue(i, issue[:title], body)
+      when /resolution|priority|component|type|version|severity|platform/
+        old_labs = issue[:labels].map { |l| l[:name] }
+        return issue unless @labels.has_key?(category)
+        t, f = @labels[category].partition { |pat, rep| pat.match(value) }
+        if t.empty?
+          if value and not value.empty?
+            $logger.warn("issue #{i}: no match for label '#{value}' in '#{category}'")
+          end
+          return issue
+        elsif t.size > 1
+          $logger.error("issue #{i}: more than one match for '#{value}' in '#{category}'")
+          exit 1
+        end
+        new_labs = old_labs.reject { |lab| f.find { |pat, rep| rep == lab } }
+        if old_labs.size != new_labs.size
+          $logger.info("issue #{i}: replacing all '#{category}' labels by '#{t[0][1]}'")
+        end
+        new_label = t[0][1]
+        return issue if new_label.empty?
+        $logger.info("issue #{i}: adding label '#{new_label}'")
+        new_labs << new_label
+        new_labs_set = Set.new new_labs
+        $logger.debug("issue #{i}: updating lables to #{new_labs}")
+        return client.update_issue_opts(issue, :labels => new_labs_set.to_a)
+      when /comment|changelog/
+        return issue if value == nil || value.empty? || value =~ /Milestone.*deleted/
+        $logger.info("issue #{i}: adding '#{category}' by '#{author}'")
+        max_len = 30
+        excerpt = value[0, max_len].gsub(/\n|\r/, ' ')
+        excerpt << '...' if value.size > max_len
+        $logger.debug("issue #{i}: comment '#{excerpt}'")
+        created_at=nil
+        if updated
+          created_at = Time.at(updated / 1e6, updated % 1e6)
+        end
+        if category == 'changelog'
+          value.insert(0, "**Release Note:**\n")
+        end
+        body = markdownify(author, value, created_at)
+        client.add_comment(i, body)
+      when /keywords|cc|reporter/ # TODO
     end
     return issue
   end
