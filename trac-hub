@@ -184,14 +184,30 @@ class Migrator
       end
 
       [:description, :owner, :milestone, :type,
-       :component, :priority, :version, :resolution, :severity, :platform].map do |cat|
+       :component, :priority, :version, :resolution, :severity].map do |cat|
         if ticket[cat] != nil
           issue = change_issue(issue, author, cat.to_s, ticket[cat], ticket)
         end
       end
+      $logger.info('applying custom labels')
+      @trac.customs.where(:ticket => ticket[:id]).each do |custom|
+        if custom[:name] != 'changelog'
+          issue = change_issue(issue, nil, custom[:name], custom[:value], nil, nil)
+        end
+      end
+      changelog_done = false
       $logger.info('replaying ticket history')
       @trac.changes.where(:ticket => ticket[:id]).each do |chg|
         issue = change_issue(issue, trac_mail(chg[:author]), chg[:field], chg[:newvalue], nil, chg[:time])
+        if chg[:field] == 'changelog'
+          changelog_done = true
+        end
+      end
+      $logger.info('applying custom text fields')
+      @trac.customs.where(:ticket => ticket[:id]).each do |custom|
+        if custom[:name] == 'changelog' and changelog_done == false
+          issue = change_issue(issue, nil, custom[:name], custom[:value], nil, nil)
+        end
       end
       $logger.info("migrated ticket #{ticket[:id]}")
       @last_created_issue = issue[:number]
@@ -388,13 +404,14 @@ class Migrator
 end
 
 class Trac
-  attr_reader :milestones, :tickets, :changes, :sessions
+  attr_reader :milestones, :tickets, :changes, :customs, :sessions
   def initialize(db)
     $logger.info('loading milestones and tickets')
     @db = db
     @milestones = @db[:milestone]
     @tickets = @db[:ticket]
     @changes = @db[:ticket_change]
+    @customs = @db[:ticket_custom]
     @sessions = @db[:session_attribute]
   end
 end
@@ -450,11 +467,11 @@ class GitHub
       rate_check
       @client.create_issue(@repo, *args)
     rescue Octokit::AbuseDetected
-      $logger.warn("issue #{args[0][:number]}: Github abuse detection triggered. Retrying in 5 min...")
+      $logger.warn("Github abuse detection triggered. Retrying in 5 min...")
       sleep 5*60
       retry
     rescue
-      $logger.error("issue #{args[0][:number]}: problem creating issue.")
+      $logger.error("problem creating issue.")
     end
   end
 
