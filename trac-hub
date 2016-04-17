@@ -235,12 +235,12 @@ class Migrator
         end
       when 'status'
         case value
-        when 'closed'
-          $logger.info("issue #{i}: closing")
-          return client.close_issue(i)
-        when 'reopened'
-          $logger.info("issue #{i}: reopening")
-          return client.reopen_issue(i)
+          when 'closed'
+            $logger.info("issue #{i}: closing")
+            return client.close_issue(i)
+          when 'reopened'
+            $logger.info("issue #{i}: reopening")
+            return client.reopen_issue(i)
         end
       when 'summary'
         $logger.info("issue #{i}: updating title to '#{value}'")
@@ -265,7 +265,7 @@ class Migrator
           body = markdownify(author, value, created_at, updated_at)
         end
         return client.update_issue(i, issue[:title], body)
-      when /resolution|priority|component|type|version|severity|platform/
+      when 'resolution', 'priority', 'component', 'type', 'version', 'severity', 'platform'
         old_labs = issue[:labels].map { |l| l[:name] }
         return issue unless @labels.has_key?(category)
         t, f = @labels[category].partition { |pat, rep| pat.match(value) }
@@ -289,7 +289,7 @@ class Migrator
         new_labs_set = Set.new new_labs
         $logger.debug("issue #{i}: updating lables to #{new_labs}")
         return client.update_issue_opts(issue, :labels => new_labs_set.to_a)
-      when /comment|changelog/
+      when 'comment', 'changelog'
         return issue if value == nil || value.empty? || value =~ /Milestone.*deleted/
         $logger.info("issue #{i}: adding '#{category}' by '#{author}'")
         max_len = 30
@@ -305,7 +305,7 @@ class Migrator
         end
         body = markdownify(author, value, created_at)
         client.add_comment(i, body)
-      when /keywords|cc|reporter/ # TODO
+      when 'keywords', 'cc', 'reporter' # TODO
     end
     return issue
   end
