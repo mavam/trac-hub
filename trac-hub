@@ -197,12 +197,36 @@ class Migrator
       end
       changelog_done = false
       $logger.info('replaying ticket history')
+
+      # we have to combine the changes and attachment table results and
+      # sort them by date and then replay them afterwards
+      changes = Hash.new
       @trac.changes.where(:ticket => ticket[:id]).each do |chg|
-        issue = change_issue(issue, trac_mail(chg[:author]), chg[:field], chg[:newvalue], nil, chg[:time])
-        if chg[:field] == 'changelog'
-          changelog_done = true
+        changes[chg[:time]] = chg
+      end
+      @trac.attachments.where(:type => 'ticket', :id => ticket[:id]).each do |attachment|
+        changes[attachment[:time]] = attachment
+      end
+
+      # now we replay all changes after we have sorted the changes
+      # accordingly.
+      changes = changes.sort_by { |_key, value| _key }
+      changes.each do |chg|
+        chg = chg[1]
+        # check if this is a ticket change
+        # or attachment change
+        if chg[:ticket]
+          # a ticket change
+          issue = change_issue(issue, trac_mail(chg[:author]), chg[:field], chg[:newvalue], nil, chg[:time])
+          if chg[:field] == 'changelog'
+            changelog_done = true
+          end
+        else
+          # a ticket attachment change
+          issue = change_issue(issue, trac_mail(chg[:author]), 'attachment', chg[:filename], chg, chg[:time])
         end
       end
+
       $logger.info('applying custom text fields')
       @trac.customs.where(:ticket => ticket[:id]).each do |custom|
         if custom[:name] == 'changelog' and changelog_done == false
@@ -289,9 +313,12 @@ class Migrator
         new_labs_set = Set.new new_labs
         $logger.debug("issue #{i}: updating lables to #{new_labs}")
         return client.update_issue_opts(issue, :labels => new_labs_set.to_a)
-      when 'comment', 'changelog'
+      when 'comment', 'changelog', 'attachment'
         return issue if value == nil || value.empty? || value =~ /Milestone.*deleted/
         $logger.info("issue #{i}: adding '#{category}' by '#{author}'")
+        if category == 'attachment'
+          value = ticket[:description]
+        end
         max_len = 30
         excerpt = value[0, max_len].gsub(/\n|\r/, ' ')
         excerpt << '...' if value.size > max_len
@@ -300,9 +327,16 @@ class Migrator
         if updated
           created_at = Time.at(updated / 1e6, updated % 1e6)
         end
-        if category == 'changelog'
-          value.insert(0, "**Release Note:**\n")
+
+        # depending on the category we have to add
+        # a short marker.
+        case category
+          when 'changelog'
+            value.insert(0, "**Release Note:**\n")
+          when 'attachment'
+            value.insert(0, "**Attachment added:** `#{ticket[:filename]}` (#{(ticket[:size]/1024.0).round(1)} KiB)\n")
         end
+
         body = markdownify(author, value, created_at)
         client.add_comment(i, body)
       when 'keywords', 'cc', 'reporter' # TODO
@@ -404,7 +438,7 @@ class Migrator
 end
 
 class Trac
-  attr_reader :milestones, :tickets, :changes, :customs, :sessions
+  attr_reader :milestones, :tickets, :changes, :customs, :sessions, :attachments
   def initialize(db)
     $logger.info('loading milestones and tickets')
     @db = db
@@ -413,6 +447,7 @@ class Trac
     @changes = @db[:ticket_change]
     @customs = @db[:ticket_custom]
     @sessions = @db[:session_attribute]
+    @attachments = @db[:attachment]
   end
 end
 
