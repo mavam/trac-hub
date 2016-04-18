@@ -7,7 +7,8 @@ require 'optparse'
 require 'sequel'
 require 'yaml'
 require 'set'
-require "singleton"
+require 'singleton'
+require 'uri'
 
 class GracefulQuit
   include Singleton
@@ -36,7 +37,7 @@ class GracefulQuit
 end
 
 class Migrator
-  def initialize(trac, github, users, labels, deduplicate, obfuscate, revmap)
+  def initialize(trac, github, users, labels, deduplicate, obfuscate, revmap, attachurl)
     @trac = trac
     repo = github['repo']
     logins = github['logins']
@@ -73,6 +74,7 @@ class Migrator
     end
     @obfuscate = obfuscate
     @revmap = revmap
+    @attachurl = attachurl
     $logger.info("Last created issue on GitHub is '#{@last_created_issue}'")
   end
 
@@ -334,7 +336,18 @@ class Migrator
           when 'changelog'
             value.insert(0, "**Release Note:**\n")
           when 'attachment'
-            value.insert(0, "**Attachment added:** `#{ticket[:filename]}` (#{(ticket[:size]/1024.0).round(1)} KiB)\n")
+            text = "**Attachment added:**"
+            if @attachurl
+              url="#{@attachurl}/#{i}/#{ticket[:filename]}"
+              if [".png", ".jpg", ".gif", ".PNG", ".JPG", ".GIF"].include? File.extname(ticket[:filename])
+                text = "#{text} `#{ticket[:filename]}` (#{(ticket[:size]/1024.0).round(1)} KiB)\n![#{ticket[:filename]}](#{URI.escape(url)})"
+              else
+                text = "#{text} [`#{ticket[:filename]}`](#{URI.escape(url)}) (#{(ticket[:size]/1024.0).round(1)} KiB)"
+              end
+            else
+              text = "#{text} `#{ticket[:filename]}` (#{(ticket[:size]/1024.0).round(1)} KiB)"
+            end
+            value.insert(0, "#{text}\n")
         end
 
         body = markdownify(author, value, created_at)
@@ -628,8 +641,9 @@ class Options < Hash
               'allows to specify a commit revision mapping FILE') do |file|
         self[:revmapfile] = file
       end
-      opts.on('-v', '--verbose', 'be verbose') do |v|
-        self[:verbose] = v
+      opts.on('-a', '--attachment-url URL',
+              'if attachment files are reachable via a URL we reference this here') do |url|
+        self[:attachurl] = url
       end
       begin
         opts.parse!(argv)
@@ -699,6 +713,6 @@ if __FILE__ == $0
   end
 
   trac = Trac.new(db)
-  migrator = Migrator.new(trac, cfg['github'], cfg['users'], cfg['labels'], opts[:deduplicate], opts[:obfuscate], revmap)
+  migrator = Migrator.new(trac, cfg['github'], cfg['users'], cfg['labels'], opts[:deduplicate], opts[:obfuscate], revmap, opts[:attachurl])
   migrator.migrate(opts[:start])
 end
