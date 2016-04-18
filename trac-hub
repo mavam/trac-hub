@@ -282,13 +282,16 @@ class Migrator
         # we have to see if the old body contains anything we have to
         # keep in the new body
         if not issue[:body].empty?
-          body = markdownify(nil, value, created_at, updated_at)
+          body,body_author = markdownify(nil, value, created_at, updated_at)
           issue_author = issue[:body].scan(/(\*\*Originally .*\*\*\n\n___\n).*/)
           if not issue_author.empty?
             body.insert(0, "#{issue_author.last.first}")
           end
         else
-          body = markdownify(author, value, created_at, updated_at)
+          body,body_author = markdownify(author, value, created_at, updated_at)
+        end
+        if body_author and body_author != author
+          client = @clients[body_author]
         end
         return client.update_issue(i, issue[:title], body)
       when 'resolution', 'priority', 'component', 'type', 'version', 'severity', 'platform'
@@ -350,7 +353,10 @@ class Migrator
             value.insert(0, "#{text}\n")
         end
 
-        body = markdownify(author, value, created_at)
+        body,body_author = markdownify(author, value, created_at)
+        if body_author and body_author != author
+          client = @clients[body_author]
+        end
         client.add_comment(i, body)
       when 'keywords', 'cc', 'reporter' # TODO
     end
@@ -391,12 +397,18 @@ class Migrator
     str.gsub!(/ticket:(\d+)/, '#\1')
     # Authorship & times
     if author
-      # we search for "Original poster" and identify the real
-      # author of the ticket
-      str_author = str.scan(/Original poster: (.*)/)
-      if not str_author.empty?
-        author = str_author.last.first
+
+      # we search for "Original poster" and "Original author"
+      # and identify the real author
+      org_poster = str.scan(/Original poster: (.*)/)
+      if not org_poster.empty?
+        author = org_poster.last.first
       end
+      org_author = str.scan(/Original author: (.*)/)
+      if not org_author.empty?
+        author = org_author.last.first
+      end
+
       extra = "Originally"
       if not @clients.has_key?(author)
         if @users.has_key?(author)
@@ -446,7 +458,9 @@ class Migrator
     end
     # strip sf.net conversion markers
     str.gsub!(/^----\nMoved from SF.*\n*.*$/, '')
-    str
+    str.gsub!(/^Moved from SF.*\n*.*$/, '')
+
+    return str, author
   end
 end
 
