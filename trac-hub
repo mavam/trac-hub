@@ -202,19 +202,19 @@ class Migrator
 
       # we have to combine the changes and attachment table results and
       # sort them by date and then replay them afterwards
-      changes = Hash.new
+      changes = []
       @trac.changes.where(:ticket => ticket[:id]).each do |chg|
-        changes[chg[:time]] = chg
+        changes.push({"time"=>chg[:time], "value"=>chg})
       end
       @trac.attachments.where(:type => 'ticket', :id => ticket[:id]).each do |attachment|
-        changes[attachment[:time]] = attachment
+        changes.push({"time"=>attachment[:time], "value"=>attachment})
       end
 
       # now we replay all changes after we have sorted the changes
       # accordingly.
-      changes = changes.sort_by { |_key, value| _key }
+      changes = changes.sort_by { |k| k["time"] }
       changes.each do |chg|
-        chg = chg[1]
+        chg = chg["value"]
         # check if this is a ticket change
         # or attachment change
         if chg[:ticket]
