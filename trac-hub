@@ -482,6 +482,7 @@ class GitHub
   def initialize(user, pass, repo)
     @user = user
     $logger.debug("#{@user} connects to github repo '#{repo}'")
+    Octokit.auto_paginate = true
     @client = Octokit::Client.new(:login => @user, :password => pass)
     @repo = repo
   end
