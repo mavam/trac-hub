@@ -63,6 +63,12 @@ are known or can't be used and are thus not stored in the `github` section. As
 soon as you have the login credentials for a user please use the `github`
 `logins` section in the config instead.
 
+Dependencies
+------------
+
+Make sure you have the bundler gem installed (`gem install bundler`).
+Thereafter, you can install missing dependencies via `bundle install`.
+
 License
 -------
 
