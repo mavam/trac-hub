@@ -7,6 +7,9 @@
 #
 # Copyright 2016 (c) Jens Maus <mail@jens-maus.de>
 #
+# This script connects to an `sqlite` database and directly exports the files
+# using `trac-admin`. If you don't have access to `trac-admin` or use a MySQL
+# database, take a look at the `download-trac-attachments-mysql.sh` script.
 
 TRAC_ENV=/var/www/www.yam.ch/trac
 TRAC_DB=${TRAC_ENV}/db/trac.db
