@@ -11,37 +11,37 @@ github:
  
 labels:
   priority:
-    - ['Low', '@low']
-    - ['High', '@high']
+    Low:                '@low'
+    High:               '@high'
   severity:
-    - ['blocker', '#high']
-    - ['critical', '#critical']
-    - ['major', '#major']
-    - ['minor', '#minor']
-    - ['trivial', '#trivial']
+    blocker:            '#high'
+    critical:           '#critical'
+    major:              '#major'
+    minor:              '#minor'
+    trivial:            '#trivial'
   type:
-    - ['Feature Request', 'feature request']
-    - ['Task', 'task']
-    - ['Fastpath', 'fastpath']
-    - ['Problem', 'problem']
-    - ['[Pp]atch', 'patch']
-    - ['Test Case Missing', 'test missing']
+    Feature Request:    feature request
+    Task:               task
+    Fastpath:           fastpath
+    Problem:            problem
+    '[Pp]atch':         patch
+    Test Case Missing:  test missing
   component:
-    - ['configuration', 'Configuration']
-    - ['documentation', 'Documentation']
+    configuration:      Configuration
+    documentation:      Documentation
   version:
-    - ['1\.3', 'v1.3']
-    - ['1\.4', 'v1.4']
-    - ['git/master', 'git/master']
+    '1\.3':             v1.3
+    '1\.4':             v1.4
+    git/master:         git/master
   resolution:
-    - ['Rejected', 'rejected']
-    - ['Invalid', 'invalid']
-    - ['Duplicate', 'duplicate']
-    - ['Works for Me', 'works for me']
+    Rejected:           rejected
+    Invalid:            invalid
+    Duplicate:          duplicate
+    Works for Me:       works for me
   platform:
-    - ['Linux', 'Linux']
-    - ['Windows', 'Windows']
+    Linux:              Linux
+    Windows:            Windows
 
 users:
-  - [matthias, mavam]
-  - [vallenti, mavam]
+  matthias: mavam
+  vallenti: mavam
