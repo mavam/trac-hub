@@ -555,7 +555,7 @@ class GitHub
     begin
       rate_check
       @client.close_issue(@repo, *args)
-    rescue Octokit::AbusedDetected
+    rescue Octokit::AbuseDetected
       $logger.warn("issue #{args[0]}: Github abuse detection triggered. Retrying in 5 min...")
       sleep 5*60
       retry
@@ -568,7 +568,7 @@ class GitHub
     begin
       rate_check
       @client.reopen_issue(@repo, *args)
-    rescue Octokit::AbusedDetected
+    rescue Octokit::AbuseDetected
       $logger.warn("issue #{args[0]}: Github abuse detection triggered. Retrying in 5 min...")
       sleep 5*60
       retry
