@@ -42,8 +42,8 @@ class Migrator
     repo = github['repo']
     logins = github['logins']
     $logger.info('Retrieving e-mails for users with a valid login')
-    logins.each do |user, pass, emails|
-      client = GitHub.new(user, pass, repo)
+    logins.each do |user, data|
+      client = GitHub.new(user, data["pass"], repo)
       # Map first user to @default
       if @clients == nil
         @clients = Hash.new(client)
@@ -52,7 +52,7 @@ class Migrator
       # Map user name to client object.
       @clients[user] = client
       # Map emails from config.yaml to login objects.
-      emails.each do |mail|
+      data["emails"].each do |mail|
         $logger.debug("Mapping '#{mail}' to '#{client.login}'")
         @clients[mail] = client
       end
