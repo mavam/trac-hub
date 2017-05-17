@@ -706,13 +706,12 @@ if __FILE__ == $0
     revmap = Hash.new()
     f = File.open(opts[:revmapfile], "r")
     f.each_line do |line|
-      array = line.split(/\s+/)
+      rev, sha = line.split(/\s+/)
 
-      # SVN revision can start with a 'rXXXX"
-      array[0].gsub!(/^r(.*)/, '\1')
+      # normalize SVN revision: remove leading "r" if present:
+      rev.gsub!(/^r/, '')
 
-      # lets put this into the hash map
-      revmap[array[0]] = array[1]
+      revmap[rev] = sha
     end
     f.close
   end
