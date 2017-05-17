@@ -1,6 +1,6 @@
 trac:
-  sqlite:
-    file: db/trac.db
+  database: sqlite://db/trac.db
+  # database: mysql2://user:password@host:port/database
 
 github:
   repo: 'mavam/test'

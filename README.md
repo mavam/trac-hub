@@ -45,8 +45,10 @@ Configuration
 -------------
 
 The YAML configuration file contains four sections. The section `trac` includes
-all trac-related configuration options. At this point trac-hub only supports
-SQLite, but it would be trivial to add PostgreSQL and MySQL support.
+all trac-related configuration options. The database URL follows the scheme
+described [here](http://sequel.jeremyevans.net/rdoc/classes/Sequel.html#method-c-connect).
+In order to use databases other than sqlite, you may have to add them to the
+`Gemfile`. For mysql databases, you should use the mysql2 adapter.
 
 The section `github` includes the repository to migrate as well as a list of
 github account credentials. The latter enables creating issues/comments under

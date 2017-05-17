@@ -691,14 +691,8 @@ if __FILE__ == $0
 
   # Setup database.
   db = nil
-  if sqlite = cfg['trac']['sqlite']
-    file = sqlite['file']
-    if not File.exists?(file)
-      $logger.error("no such file: #{file}")
-      exit 1
-    end
-    $logger.debug("connecting to SQLite databse '#{file}'")
-    db = Sequel.sqlite(file)
+  if db_url = cfg['trac']['database']
+    db = Sequel.connect(db_url)
   end
   if not db
     $logger.error('could not connect to trac databse')
