@@ -711,10 +711,6 @@ if __FILE__ == $0
       # SVN revision can start with a 'rXXXX"
       array[0].gsub!(/^r(.*)/, '\1')
 
-      # git commit sha can be striped down to 7 characters for
-      # proper reference in Github
-      array[1] = array[1].to_s[0...7]
-
       # lets put this into the hash map
       revmap[array[0]] = array[1]
     end
