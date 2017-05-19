@@ -18,6 +18,9 @@ Thereafter just invoke `trac-hub`:
 
     ./trac-hub
 
+If this fails with an error, make sure to have a look at the
+[Dependencies](#dependencies) section.
+
 By default, trac-hub assumes the file `config.yaml` in the same directory as
 the script. You can also specify the configuration file on the command line:
 
@@ -70,6 +73,15 @@ Dependencies
 
 Make sure you have the bundler gem installed (`gem install bundler`).
 Thereafter, you can install missing dependencies via `bundle install`.
+
+The easiest way to install the dependencies locally is as follows:
+
+    bundle install --path vendor/bundle
+
+In this case, you can execute the program by replacing `./trac-hub` above
+with `bundle exec trac-hub`, e.g.:
+
+    bundle exec trac-hub -s 42
 
 License
 -------
