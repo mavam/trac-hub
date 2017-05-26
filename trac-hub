@@ -703,22 +703,12 @@ if __FILE__ == $0
   # This revmap file allows to map between SVN revisions (rXXXX)
   # and git commit sha1 hashes.
   if opts[:revmapfile]
-    revmap = Hash.new()
-    f = File.open(opts[:revmapfile], "r")
-    f.each_line do |line|
-      array = line.split(/\s+/)
-
-      # SVN revision can start with a 'rXXXX"
-      array[0].gsub!(/^r(.*)/, '\1')
-
-      # git commit sha can be striped down to 7 characters for
-      # proper reference in Github
-      array[1] = array[1].to_s[0...7]
-
-      # lets put this into the hash map
-      revmap[array[0]] = array[1]
+    File.open(opts[:revmapfile], "r") do |f|
+      revmap = Hash[f.lines
+        .map {|line|    line.split(/\s+/)}
+        .map {|rev,sha| [rev.gsub(/^r/, ''), sha]}  # remove leading "r" if present
+      ]
     end
-    f.close
   end
 
   trac = Trac.new(db)
