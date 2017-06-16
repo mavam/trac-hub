@@ -278,12 +278,15 @@ class Migrator
         if ticket
           created_at = Time.at(ticket[:time] / 1e6, ticket[:time] % 1e6)
           updated_at = Time.at(ticket[:changetime] / 1e6, ticket[:changetime] % 1e6)
+          if ticket[:time] == ticket[:changetime]
+            updated_at = nil
+          end
         end
         # we have to see if the old body contains anything we have to
         # keep in the new body
         if not issue[:body].empty?
           body,body_author = markdownify(nil, value, created_at, updated_at)
-          issue_author = issue[:body].scan(/(\*\*Originally .*\*\*\n\n___\n).*/)
+          issue_author = issue[:body].scan(/(Originally by \*\*.*\*\*\n\n___\n).*/)
           if not issue_author.empty?
             body.insert(0, "#{issue_author.last.first}")
           end
@@ -413,7 +416,7 @@ class Migrator
       if not @clients.has_key?(author)
         if @users.has_key?(author)
           author = @users[author]
-          extra = "#{extra} by @#{author}"
+          extra = "#{extra} by *@#{author}*"
         else
           ## PYINSTALLER SPECIAL
           author = "anonymous" if author == "openticket"
@@ -426,19 +429,18 @@ class Migrator
             author.gsub!('com', ' COOM ')
           end
 
-          extra = "#{extra} by _#{author}_"
+          extra = "#{extra} by ***#{author}***"
         end
       end
       if created_at
-        extra = "#{extra} on #{created_at.strftime("%Y-%m-%d %H:%M:%S %z")}"
-      else
-        if updated_at
-          extra = "#{extra} updated on #{created_at.strftime("%Y-%m-%d %H:%M:%S %z")}"
-        end
+        extra = "#{extra}, created on *#{created_at.strftime("%Y-%m-%d %H:%M")}*"
+      end
+      if updated_at
+        extra = "#{extra}, last updated on *#{created_at.strftime("%Y-%m-%d %H:%M")}*"
       end
 
       unless extra.empty?
-        str.insert(0, "**#{extra}**\n\n___\n")
+        str.insert(0, "#{extra}\n\n___\n")
       end
 
       # Reply
