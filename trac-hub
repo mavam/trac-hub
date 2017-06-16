@@ -101,7 +101,7 @@ class Migrator
   # returns the git commit hash for a specified revision (using revmap hash)
   def map_changeset(str)
     if @revmap and @revmap.has_key?(str)
-      return "(#{@revmap[str].to_s})"
+      return "[r#{str}](../commit/#{@revmap[str]})"
     else
       return str
     end
@@ -392,10 +392,12 @@ class Migrator
     str.gsub!(/(^\s+)\*/, '\1-')
     str.gsub!(/(^\s+)(\d)\./, '\1\2.')
     # Changeset
-    str.gsub!(/\[changeset:"([^\]]+)".*\]/) { map_changeset(Regexp.last_match[1]) }
-    str.gsub!(/\[changeset:([^\]]+)\]/) { map_changeset(Regexp.last_match[1]) }
-    str.gsub!(/changeset:([0-9a-f]+)/) { map_changeset(Regexp.last_match[1]) }
-    str.gsub!(/\(In \[(.*)\]\)/) { "In #{map_changeset(Regexp.last_match[1])}:\n" }
+    str.gsub!(/https?:\/\/svnweb.cern.ch\/trac\/madx\/changeset\/(\d+)\/?/, '[changeset:\1]')
+    str.gsub!(/\[changeset:"r(\d+)".*\]/, '[changeset:\1]')
+    str.gsub!(/\[changeset:r(\d+)\]/,     '[changeset:\1]')
+    str.gsub!(/\[changeset:"(\d+)".*\]/) { map_changeset(Regexp.last_match[1]) }
+    str.gsub!(/\[changeset:(\d+)\]/)     { map_changeset(Regexp.last_match[1]) }
+    str.gsub!(/\br(\d+)\b/)              { map_changeset(Regexp.last_match[1]) }
     # Ticket
     str.gsub!(/ticket:(\d+)/, '#\1')
     # Authorship & times
