@@ -151,13 +151,6 @@ class Migrator
           issue = change_issue(issue, author, cat.to_s, ticket[cat], ticket)
         end
       end
-      $logger.info('applying custom labels')
-      @trac.customs.where(:ticket => ticket[:id]).each do |custom|
-        if custom[:name] != 'changelog'
-          issue = change_issue(issue, nil, custom[:name], custom[:value], nil, nil)
-        end
-      end
-      changelog_done = false
       $logger.info('replaying ticket history')
 
       # we have to combine the changes and attachment table results and
@@ -180,20 +173,12 @@ class Migrator
         if chg[:ticket]
           # a ticket change
           issue = change_issue(issue, trac_mail(chg[:author]), chg[:field], chg[:newvalue], nil, chg[:time])
-          if chg[:field] == 'changelog'
-            changelog_done = true
-          end
         else
           # a ticket attachment change
           issue = change_issue(issue, trac_mail(chg[:author]), 'attachment', chg[:filename], chg, chg[:time])
         end
       end
 
-      $logger.info('applying custom text fields')
-      @trac.customs.where(:ticket => ticket[:id]).each do |custom|
-        if custom[:name] == 'changelog' and changelog_done == false
-          issue = change_issue(issue, nil, custom[:name], custom[:value], nil, nil)
-        end
       end
       $logger.info("migrated ticket #{ticket[:id]}")
       @last_created_issue = issue[:number]
@@ -424,13 +409,12 @@ class Migrator
 end
 
 class Trac
-  attr_reader :tickets, :changes, :customs, :sessions, :attachments
+  attr_reader :tickets, :changes, :sessions, :attachments
   def initialize(db)
     $logger.info('loading tickets')
     @db = db
     @tickets = @db[:ticket]
     @changes = @db[:ticket_change]
-    @customs = @db[:ticket_custom]
     @sessions = @db[:session_attribute]
     @attachments = @db[:attachment]
   end
