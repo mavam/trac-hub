@@ -61,7 +61,6 @@ class Migrator
     @users = Hash[users]
     @collaborators = @default.collaborators.map { |c| c[:login] }
     @labels = Hash[labels.map { |cat, rx| [cat, rx.map { |f, t| [Regexp.new('^' + f + '$'), t] }] }]
-    @milestones = Hash[@default.list_milestones.map { |m| [m[:title], m[:number]] }]
     if deduplicate
       @issues = Hash[@default.list_issues.map { |i| [i[:title], i] }]
     end
@@ -83,7 +82,6 @@ class Migrator
       start_ticket = @last_created_issue+1
     end
     GracefulQuit.enable
-    migrate_milestones
     migrate_tickets(start_ticket)
   end
 
@@ -104,35 +102,6 @@ class Migrator
       return "[r#{str}](../commit/#{@revmap[str]})"
     else
       return str
-    end
-  end
-
-  def migrate_milestones
-    $logger.info('migrating milestones')
-    @trac.milestones.each do |milestone|
-      name = milestone[:name]
-      if @milestones.has_key?(name)
-        $logger.warn("skipping already existing milestone '#{name}'")
-        next
-      end
-      opts = {}
-      opts[:state] = milestone[:completed] == 0 ? 'open' : 'closed'
-      opts[:description] = milestone[:description]
-      begin
-        if milestone[:due].is_a? Numeric and milestone[:due] > 0
-          t = Time.at(milestone[:due]/1000000)
-        else
-          t = DateTime.parse(milestone[:due])
-        end
-        opts[:due_on] = t.to_time
-      rescue
-        if not milestone[:due].is_a? Numeric or milestone[:due] > 0
-          $logger.warn("ignoring milestone date '#{milestone[:due]}'")
-        end
-      end
-      $logger.info("creating new milestone #{name}")
-      ms = @default.create_milestone(name, opts)
-      @milestones[name] = ms[:number]
     end
   end
 
@@ -185,7 +154,7 @@ class Migrator
         exit 1
       end
 
-      [:description, :owner, :milestone, :type,
+      [:description, :owner, :type,
        :component, :priority, :version, :resolution, :severity].map do |cat|
         if ticket[cat] != nil
           issue = change_issue(issue, author, cat.to_s, ticket[cat], ticket)
@@ -246,11 +215,6 @@ class Migrator
     i = issue[:number]
     client = @clients[author]
     case category
-      when 'milestone'
-        ms = @milestones[value]
-        return issue unless ms
-        $logger.info("issue #{i}: updating milestone to '#{value}'")
-        return client.update_issue_opts(issue, :milestone => ms)
       when 'owner'
         owner = client.login
         if owner and @collaborators.include?(owner)
@@ -322,7 +286,7 @@ class Migrator
         $logger.debug("issue #{i}: updating lables to #{new_labs}")
         return client.update_issue_opts(issue, :labels => new_labs_set.to_a)
       when 'comment', 'changelog', 'attachment'
-        return issue if value == nil || value.empty? || value =~ /Milestone.*deleted/
+        return issue if value == nil || value.empty?
         $logger.info("issue #{i}: adding '#{category}' by '#{author}'")
         if category == 'attachment'
           value = ticket[:description]
@@ -469,11 +433,10 @@ class Migrator
 end
 
 class Trac
-  attr_reader :milestones, :tickets, :changes, :customs, :sessions, :attachments
+  attr_reader :tickets, :changes, :customs, :sessions, :attachments
   def initialize(db)
-    $logger.info('loading milestones and tickets')
+    $logger.info('loading tickets')
     @db = db
-    @milestones = @db[:milestone]
     @tickets = @db[:ticket]
     @changes = @db[:ticket_change]
     @customs = @db[:ticket_custom]
@@ -496,21 +459,9 @@ class GitHub
     @client.collaborators(@repo)
   end
 
-  def list_milestones
-    rate_check
-    open = @client.list_milestones(@repo, :state => 'open')
-    closed = @client.list_milestones(@repo, :state => 'closed')
-    open + closed
-  end
-
   def issue(*args)
     rate_check
     @client.issue(@repo, *args)
-  end
-
-  def create_milestone(*args)
-    rate_check
-    @client.create_milestone(@repo, *args)
   end
 
   def list_issues
