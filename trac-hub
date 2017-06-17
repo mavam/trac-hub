@@ -116,15 +116,6 @@ class Migrator
         next
       end
 
-      while @last_created_issue+1 < ticket[:id]
-        # Create empty ticket to not lose the numbering
-        issue = @default.create_issue('empty', '')
-        @default.close_issue(issue[:number])
-        raise RuntimeError unless @last_created_issue+1 == issue[:number]
-        @last_created_issue = issue[:number]
-        $logger.warn("created empty existing issue '#{issue[:number]}'")
-      end
-
       begin
         issue = @default.issue(ticket[:id])
         $logger.info("found ticket #{ticket[:id]}")
