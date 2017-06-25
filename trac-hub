@@ -3,6 +3,7 @@
 require 'json'
 require 'logger'
 require 'octokit'
+require 'rest-client'
 require 'optparse'
 require 'sequel'
 require 'yaml'
@@ -39,9 +40,10 @@ end
 class Migrator
   def initialize(trac, github, users, labels, revmap, attachurl)
     @trac = trac
-    repo = github['repo']
+    @repo = github['repo']
+    @token = github["token"]
     $logger.info('Retrieving e-mails for users with a valid login')
-    @client = GitHub.new(github["user"], github["pass"], repo)
+    @client = GitHub.new(github["user"], github["pass"], @repo)
 
     @users = Hash[users]
     @labels = Hash[labels.map { |cat, rx| [cat, Hash[rx] ] }]
@@ -85,6 +87,12 @@ class Migrator
     end
   end
 
+  # Format time for github API
+  def format_time(time)
+    time = Time.at(time/1e6, time%1e6)
+    return time.strftime("%FT%TZ")
+  end
+
   # Creates github issues for trac tickets.
   def migrate_tickets(start_ticket)
     $logger.info('migrating issues')
@@ -98,25 +106,48 @@ class Migrator
       rescue
 
         # create issue:
-        author = trac_mail(ticket[:reporter])
-        title = ticket[:summary]
-        body, labels = get_ticket_body(ticket)
-        $logger.info("creating issue #{ticket[:id]} (#{ticket[:reporter]} => #{author})")
-        issue = @client.create_issue(title, body, {:labels => labels})
-        $logger.info("created issue ##{issue[:number]} for ticket #{ticket[:id]}")
-
-        # close issue if needed:
-        if ticket[:status] == "closed"
-          $logger.info("issue #{issue[:number]}: closing")
-          @client.close_issue(issue[:number])
+        $logger.info("creating issue #{ticket[:id]} (#{ticket[:reporter]})")
+        body, labels, closed_at = get_ticket_body(ticket)
+        issue = {
+          "title" => ticket[:summary],
+          "body" => body,
+          "labels" => labels,
+          "closed" => ticket[:status] == "closed",
+          "created_at" => format_time(ticket[:time]),
+        }
+        request = {"issue" => issue}
+        if ticket[:changetime]
+          issue["updated_at"] = format_time(ticket[:changetime])
         end
+        if issue["closed"] and closed_at
+          issue["closed_at"] = format_time(closed_at)
+        end
+
+        response = JSON.parse(RestClient.post(
+          "https://api.github.com/repos/#{@repo}/import/issues",
+          request.to_json,
+          {"Authorization" => "token #{@token}",
+           "Content-Type" => "application/json",
+           "Accept" => "application/vnd.github.golden-comet-preview+json"}))
+
+        while response["status"] == "pending"
+          sleep 0.1
+          $logger.info("Checking import status: #{response['id']}")
+          response = JSON.parse(RestClient.get(response['url'], {
+            "Authorization" => "token #{@token}",
+            "Accept" => "application/vnd.github.golden-comet-preview+json"}))
+        end
+        $logger.info("Status: #{response['status']}")
+        issue_id = response["issue_url"].match(/\d+$/).to_s.to_i
+
+        $logger.info("created issue ##{issue_id} for ticket #{ticket[:id]}")
 
         # assert correct issue number
-        if issue[:number] != ticket[:id]
-          $logger.info("mismatch issue ##{issue[:number]} for ticket #{ticket[:id]}")
+        if issue_id != ticket[:id]
+          $logger.info("mismatch issue ##{issue_id} for ticket #{ticket[:id]}")
           exit 1
         end
-        @last_created_issue = issue[:number]
+        @last_created_issue = ticket[:id]
         GracefulQuit.check("quitting after completing #{@last_created_issue}")
       end
     end
@@ -126,6 +157,7 @@ class Migrator
 
     body = ""
     body += "*Issue migrated from trac ticket # #{ticket[:id]}*\n\n"
+    closed = nil
 
     # summary line:
     body += [:component, :priority, :resolution, :keywords].map{
@@ -160,9 +192,12 @@ class Migrator
       add = @labels.fetch(x[:field], Hash[])[x[:newvalue]]
       labels.delete(del) if del
       labels.add(add) if add
+      if x[:field] == "status" and x[:newvalue] == "closed"
+        closed = x[:time]
+      end
     end
 
-    return body, labels.to_a.join(",")
+    return body, labels.to_a, closed
   end
 
   def ticket_change(meta)
