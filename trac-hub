@@ -42,20 +42,22 @@ class Migrator
     @trac = trac
     @repo = github['repo']
     @token = github["token"]
-    @client = GitHub.new(@repo)
+    $logger.debug("Connect to github repo '#{@repo}'")
+    @client = Octokit::Client.new()
 
     @users = Hash[users]
     @labels = Hash[labels.map { |cat, rx| [cat, Hash[rx] ] }]
     @ticket_to_issue = {}
     @trac_mails_cache = Hash.new
-    @last_created_issue = @client.list_issues.map { |i| i[:number] }.max
-    # Initialize to '0' if no ticket exist yet.
-    if @last_created_issue == nil
-        @last_created_issue = 0
-    end
+
+    $logger.debug("Get highest in #{@repo}")
+    issues = @client.list_issues(@repo, :filter => "all", :state => "all",
+                                 :sort => "created", :direction => "desc")
+    @last_created_issue = issues.empty? ? 0 : issues[0][:number]
+    $logger.info("Last created issue on GitHub is '#{@last_created_issue}'")
+
     @revmap = revmap
     @attachurl = attachurl
-    $logger.info("Last created issue on GitHub is '#{@last_created_issue}'")
   end
 
   def migrate(start_ticket = -1)
@@ -317,58 +319,6 @@ class Trac
     @changes = @db[:ticket_change]
     @sessions = @db[:session_attribute]
     @attachments = @db[:attachment]
-  end
-end
-
-class GitHub
-  def initialize(repo)
-    $logger.debug("Connect to github repo '#{repo}'")
-    Octokit.auto_paginate = true
-    @client = Octokit::Client.new()
-    @repo = repo
-  end
-
-  def issue(*args)
-    rate_check
-    @client.issue(@repo, *args)
-  end
-
-  def list_issues
-    $logger.debug("Fetch all open issues in #{@repo}")
-    open = fetch_pagewise { |i| @client.list_issues(@repo, :page => i, ) }
-    closed = fetch_pagewise do |i|
-      rate_check
-      @client.list_issues(@repo, {:state => 'closed', :page => i})
-    end
-    open + closed
-  end
-
-  private
-
-  def fetch_pagewise
-    result = []
-    begin
-      i = 1;
-      loop do
-        $logger.debug("fetching page #{i}")
-        page = yield i
-        break if page.empty?
-        result += page
-        i += 1
-      end
-    end
-    $logger.debug("fetched #{result.size} elements")
-    result
-  end
-
-  def rate_check
-    limit = @client.rate_limit.limit
-    remaining = @client.rate_limit.remaining
-    $logger.debug("#{remaining}/#{limit} operations available. Resets in: #{@client.rate_limit.resets_in}s")
-    while @client.rate_limit.remaining < 100
-      $logger.info("less than #{bound} operations viable, sleeping (#{@client.rate_limit.resets_in}s)...")
-      sleep 10
-    end
   end
 end
 
