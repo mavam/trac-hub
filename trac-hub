@@ -38,7 +38,7 @@ class GracefulQuit
 end
 
 class Migrator
-  def initialize(trac, github, users, labels, revmap, attachurl)
+  def initialize(trac, github, users, labels, revmap, attachurl, singlepost)
     @trac = trac
     @repo = github['repo']
     @token = github["token"]
@@ -58,6 +58,7 @@ class Migrator
 
     @revmap = revmap
     @attachurl = attachurl
+    @singlepost = singlepost
   end
 
   def migrate(start_ticket = -1)
@@ -105,25 +106,10 @@ class Migrator
         issue = @client.issue(ticket[:id])
         $logger.info("found ticket #{ticket[:id]}")
       rescue
-
-        # create issue:
         $logger.info("creating issue #{ticket[:id]} (#{ticket[:reporter]})")
-        body, labels, closed_at = get_ticket_body(ticket)
-        issue = {
-          "title" => ticket[:summary],
-          "body" => body,
-          "labels" => labels,
-          "closed" => ticket[:status] == "closed",
-          "created_at" => format_time(ticket[:time]),
-        }
-        request = {"issue" => issue}
-        if ticket[:changetime]
-          issue["updated_at"] = format_time(ticket[:changetime])
-        end
-        if issue["closed"] and closed_at
-          issue["closed_at"] = format_time(closed_at)
-        end
 
+        # API details: https://gist.github.com/jonmagic/5282384165e0f86ef105
+        request = compose_issue(ticket)
         response = JSON.parse(RestClient.post(
           "https://api.github.com/repos/#{@repo}/import/issues",
           request.to_json,
@@ -154,7 +140,7 @@ class Migrator
     end
   end
 
-  def get_ticket_body(ticket)
+  def compose_issue(ticket)
 
     body = ""
     body += "*Issue migrated from trac ticket # #{ticket[:id]}*\n\n"
@@ -168,14 +154,15 @@ class Migrator
 
     # Initial report
     # TODO: respect ticket[:changetime]
-    body += ticket_change({
+    body += "\n\n" if not @singlepost
+    body += ticket_change(@singlepost, {
       ticket: ticket[:id],
       time: ticket[:time],
       author: ticket[:reporter],
       field: "comment",
       oldvalue: nil,
       newvalue: ticket[:description],
-    })
+    })["body"]
 
     # combine the changes and attachment table results and sort them by date
     changes = @trac.changes.where(:ticket => ticket[:id]).collect.to_a
@@ -183,9 +170,11 @@ class Migrator
     changes = changes.sort_by{|x| x[:time]}
 
     # replay all changes in chronological order:
-    body += changes.map{
-      |x| ticket_change(x)
-    }.select{|x| x}.join("\n")
+    comments = changes.map{|x| ticket_change(@singlepost, x)}.select{|x| x}.to_a
+    if @singlepost
+      body += comments.map{|x| x["body"]}.join("\n")
+      comments = []
+    end
 
     labels = Set[]
     changes.each do |x|
@@ -198,10 +187,28 @@ class Migrator
       end
     end
 
-    return body, labels.to_a, closed
+    issue = {
+      "title" => ticket[:summary],
+      "body" => body,
+      "labels" => labels.to_a,
+      "closed" => ticket[:status] == "closed",
+      "created_at" => format_time(ticket[:time]),
+    }
+
+    if ticket[:changetime]
+      issue["updated_at"] = format_time(ticket[:changetime])
+    end
+    if issue["closed"] and closed
+      issue["closed_at"] = format_time(closed)
+    end
+
+    return {
+      "issue" => issue,
+      "comments" => comments,
+    }
   end
 
-  def ticket_change(meta)
+  def ticket_change(append, meta)
 
     # kind
     if meta[:ticket]
@@ -222,7 +229,8 @@ class Migrator
       author = "@" + @users[author]
     end
 
-    text = "\n___\n"
+    text = ""
+    text += "\n___\n" if append
     text += "#### #{time.strftime("%Y-%m-%d %H:%M:%S")}: #{author} "
 
     case kind
@@ -240,8 +248,9 @@ class Migrator
       when 'comment'
         body = meta[:newvalue]
         text += "commented\n\n"
+        text += "\n___\n" if not append
         text += markdownify(body)
-        return '' if body == nil or body.lstrip.empty?
+        return nil if body == nil or body.lstrip.empty?
 
       when 'attachment'
         text += "uploaded file "
@@ -266,10 +275,13 @@ class Migrator
 
       when 'keywords', 'cc', 'reporter', 'version'
         # don't care
-        return ''
+        return nil
     end
 
-    return text
+    return {
+      "body" => text,
+      "created_at" => format_time(meta[:time]),
+    }
   end
 
   def markdownify(str)
@@ -345,6 +357,10 @@ class Options < Hash
               'if attachment files are reachable via a URL we reference this here') do |url|
         self[:attachurl] = url
       end
+      opts.on('-S', '--single-post',
+              'Put all issue comments in the first message.') do |single|
+        self[:singlepost] = single
+      end
       begin
         opts.parse!(argv)
         if not self[:config]
@@ -399,6 +415,8 @@ if __FILE__ == $0
   end
 
   trac = Trac.new(db)
-  migrator = Migrator.new(trac, cfg['github'], cfg['users'], cfg['labels'], revmap, opts[:attachurl])
+  migrator = Migrator.new(
+      trac, cfg['github'], cfg['users'], cfg['labels'], revmap,
+      opts[:attachurl], opts[:singlepost])
   migrator.migrate(opts[:start])
 end

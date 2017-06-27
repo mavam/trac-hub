@@ -5,6 +5,8 @@ trac-hub
 issues. To this end, it accesses trac's underlying database and copies over
 milestones, creates tickets, and replays the change history of each ticket.
 
+Uses github's new [issue import API](https://gist.github.com/jonmagic/5282384165e0f86ef105).
+
 Synopsis
 --------
 
