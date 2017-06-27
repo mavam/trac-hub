@@ -2,7 +2,7 @@
 
 require 'json'
 require 'logger'
-require 'octokit'
+require 'rest-client'
 require 'optparse'
 require 'sequel'
 require 'yaml'
@@ -37,45 +37,28 @@ class GracefulQuit
 end
 
 class Migrator
-  def initialize(trac, github, users, labels, deduplicate, obfuscate, revmap, attachurl)
+  def initialize(trac, github, users, labels, revmap, attachurl, singlepost, safetychecks)
     @trac = trac
-    repo = github['repo']
-    logins = github['logins']
-    $logger.info('Retrieving e-mails for users with a valid login')
-    logins.each do |user, pass, emails|
-      client = GitHub.new(user, pass, repo)
-      # Map first user to @default
-      if @clients == nil
-        @clients = Hash.new(client)
-        @default = @clients[nil]
-      end
-      # Map user name to client object.
-      @clients[user] = client
-      # Map emails from config.yaml to login objects.
-      emails.each do |mail|
-        $logger.debug("Mapping '#{mail}' to '#{client.login}'")
-        @clients[mail] = client
-      end
-    end
+    @repo = github['repo']
+    @token = github["token"]
 
     @users = Hash[users]
-    @collaborators = @default.collaborators.map { |c| c[:login] }
-    @labels = Hash[labels.map { |cat, rx| [cat, rx.map { |f, t| [Regexp.new('^' + f + '$'), t] }] }]
-    @milestones = Hash[@default.list_milestones.map { |m| [m[:title], m[:number]] }]
-    if deduplicate
-      @issues = Hash[@default.list_issues.map { |i| [i[:title], i] }]
-    end
+    @labels = Hash[labels.map { |cat, rx| [cat, Hash[rx] ] }]
     @ticket_to_issue = {}
     @trac_mails_cache = Hash.new
-    @last_created_issue = @default.list_issues.map { |i| i[:number] }.max
-    # Initialize to '0' if no ticket exist yet.
-    if @last_created_issue == nil
-        @last_created_issue = 0
-    end
-    @obfuscate = obfuscate
+
+    $logger.debug("Get highest in #{@repo}")
+    issues = JSON.parse(RestClient.get(
+        "https://api.github.com/repos/#{@repo}/issues",
+        {params: {filter: "all", state: "all", sort: "created", direction: "desc"}}))
+    @last_created_issue = issues.empty? ? 0 : issues[0]["number"].to_i
+
+    $logger.info("Last created issue on GitHub is '#{@last_created_issue}'")
+
     @revmap = revmap
     @attachurl = attachurl
-    $logger.info("Last created issue on GitHub is '#{@last_created_issue}'")
+    @singlepost = singlepost
+    @safetychecks = safetychecks
   end
 
   def migrate(start_ticket = -1)
@@ -83,7 +66,6 @@ class Migrator
       start_ticket = @last_created_issue+1
     end
     GracefulQuit.enable
-    migrate_milestones
     migrate_tickets(start_ticket)
   end
 
@@ -101,39 +83,16 @@ class Migrator
   # returns the git commit hash for a specified revision (using revmap hash)
   def map_changeset(str)
     if @revmap and @revmap.has_key?(str)
-      return "(#{@revmap[str].to_s})"
+      return "[r#{str}](../commit/#{@revmap[str]})"
     else
       return str
     end
   end
 
-  def migrate_milestones
-    $logger.info('migrating milestones')
-    @trac.milestones.each do |milestone|
-      name = milestone[:name]
-      if @milestones.has_key?(name)
-        $logger.warn("skipping already existing milestone '#{name}'")
-        next
-      end
-      opts = {}
-      opts[:state] = milestone[:completed] == 0 ? 'open' : 'closed'
-      opts[:description] = milestone[:description]
-      begin
-        if milestone[:due].is_a? Numeric and milestone[:due] > 0
-          t = Time.at(milestone[:due]/1000000)
-        else
-          t = DateTime.parse(milestone[:due])
-        end
-        opts[:due_on] = t.to_time
-      rescue
-        if not milestone[:due].is_a? Numeric or milestone[:due] > 0
-          $logger.warn("ignoring milestone date '#{milestone[:due]}'")
-        end
-      end
-      $logger.info("creating new milestone #{name}")
-      ms = @default.create_milestone(name, opts)
-      @milestones[name] = ms[:number]
-    end
+  # Format time for github API
+  def format_time(time)
+    time = Time.at(time/1e6, time%1e6)
+    return time.strftime("%FT%TZ")
   end
 
   # Creates github issues for trac tickets.
@@ -141,229 +100,201 @@ class Migrator
     $logger.info('migrating issues')
     # We match the issue title to determine whether an issue exists already.
     @trac.tickets.order(:id).where{id >= start_ticket}.all.each do |ticket|
-      title = ticket[:summary]
-      if @issues and @issues.has_key?(title)
-        $logger.warn("skipping existing issue '#{title}'")
-        next
-      end
+      GracefulQuit.check("quitting after processing ticket ##{@last_created_issue}")
 
-      while @last_created_issue+1 < ticket[:id]
-        # Create empty ticket to not lose the numbering
-        issue = @default.create_issue('empty', '')
-        @default.close_issue(issue[:number])
-        raise RuntimeError unless @last_created_issue+1 == issue[:number]
-        @last_created_issue = issue[:number]
-        $logger.warn("created empty existing issue '#{issue[:number]}'")
-      end
+      if @safetychecks; begin
+        # issue exists already:
+        issue = JSON.parse(RestClient.get(
+            "https://api.github.com/repos/#{@repo}/issues/#{ticket[:id]}"))
+        $logger.info("found ticket #{ticket[:id]}")
+        next
+      rescue
+      end end
 
       begin
-        issue = @default.issue(ticket[:id])
-        $logger.info("found ticket #{ticket[:id]}")
-      rescue
-        author = trac_mail(ticket[:reporter])
-        if author != ticket[:reporter]
-          $logger.info("creating new ticket #{ticket[:id]} (#{ticket[:reporter]} => #{author})")
-        else
-          $logger.info("creating new ticket #{ticket[:id]} (#{author})")
-        end
-        issue = @clients[author].create_issue(title, '')
-        $logger.info("created issue ##{issue[:number]} for ticket #{ticket[:id]}")
+        $logger.info("creating issue #{ticket[:id]} (#{ticket[:reporter]})")
+
+        # API details: https://gist.github.com/jonmagic/5282384165e0f86ef105
+        request = compose_issue(ticket)
+        response = JSON.parse(RestClient.post(
+          "https://api.github.com/repos/#{@repo}/import/issues",
+          request.to_json,
+          {"Authorization" => "token #{@token}",
+           "Content-Type" => "application/json",
+           "Accept" => "application/vnd.github.golden-comet-preview+json"}))
       end
 
-      @issues[title] = issue if @issues
+      if @safetychecks
+        while response["status"] == "pending"
+          sleep 0.1
+          $logger.info("Checking import status: #{response['id']}")
+          response = JSON.parse(RestClient.get(response['url'], {
+            "Authorization" => "token #{@token}",
+            "Accept" => "application/vnd.github.golden-comet-preview+json"}))
+        end
+        $logger.info("Status: #{response['status']}")
+        issue_id = response["issue_url"].match(/\d+$/).to_s.to_i
 
-      if issue[:number] < ticket[:id]
-        while issue[:number] < ticket[:id] do
-          $logger.info("create issue?")
-          gets.chomp
-          issue = @default.create_issue('Invalid issue number', '')
-          $logger.info("created issue ##{issue[:number]} for ticket #{ticket[:id]}")
-        end
-      end
-      if issue[:number] != ticket[:id]
-        $logger.info("mismatch issue ##{issue[:number]} for ticket #{ticket[:id]}")
-        exit 1
-      end
+        $logger.info("created issue ##{issue_id} for ticket #{ticket[:id]}")
 
-      [:description, :owner, :milestone, :type,
-       :component, :priority, :version, :resolution, :severity].map do |cat|
-        if ticket[cat] != nil
-          issue = change_issue(issue, author, cat.to_s, ticket[cat], ticket)
-        end
-      end
-      $logger.info('applying custom labels')
-      @trac.customs.where(:ticket => ticket[:id]).each do |custom|
-        if custom[:name] != 'changelog'
-          issue = change_issue(issue, nil, custom[:name], custom[:value], nil, nil)
-        end
-      end
-      changelog_done = false
-      $logger.info('replaying ticket history')
-
-      # we have to combine the changes and attachment table results and
-      # sort them by date and then replay them afterwards
-      changes = []
-      @trac.changes.where(:ticket => ticket[:id]).each do |chg|
-        changes.push({"time"=>chg[:time], "value"=>chg})
-      end
-      @trac.attachments.where(:type => 'ticket', :id => ticket[:id]).each do |attachment|
-        changes.push({"time"=>attachment[:time], "value"=>attachment})
-      end
-
-      # now we replay all changes after we have sorted the changes
-      # accordingly.
-      changes = changes.sort_by { |k| k["time"] }
-      changes.each do |chg|
-        chg = chg["value"]
-        # check if this is a ticket change
-        # or attachment change
-        if chg[:ticket]
-          # a ticket change
-          issue = change_issue(issue, trac_mail(chg[:author]), chg[:field], chg[:newvalue], nil, chg[:time])
-          if chg[:field] == 'changelog'
-            changelog_done = true
-          end
-        else
-          # a ticket attachment change
-          issue = change_issue(issue, trac_mail(chg[:author]), 'attachment', chg[:filename], chg, chg[:time])
-        end
-      end
-
-      $logger.info('applying custom text fields')
-      @trac.customs.where(:ticket => ticket[:id]).each do |custom|
-        if custom[:name] == 'changelog' and changelog_done == false
-          issue = change_issue(issue, nil, custom[:name], custom[:value], nil, nil)
-        end
-      end
-      $logger.info("migrated ticket #{ticket[:id]}")
-      @last_created_issue = issue[:number]
-      GracefulQuit.check("quitting after completing #{@last_created_issue}")
-    end
-  end
-
-  # Replays the ticket history of a given ticket and returns the new issue.
-  def change_issue(issue, author, category, value, ticket=nil, updated=nil)
-    i = issue[:number]
-    client = @clients[author]
-    case category
-      when 'milestone'
-        ms = @milestones[value]
-        return issue unless ms
-        $logger.info("issue #{i}: updating milestone to '#{value}'")
-        return client.update_issue_opts(issue, :milestone => ms)
-      when 'owner'
-        owner = client.login
-        if owner and @collaborators.include?(owner)
-          $logger.info("issue #{i}: updating assignee to '#{owner}'")
-          return client.update_issue_opts(issue, :assignee => owner)
-        else
-          $logger.warn("'#{owner}' not configured as collaborator")
-        end
-      when 'status'
-        case value
-          when 'closed'
-            $logger.info("issue #{i}: closing")
-            return client.close_issue(i)
-          when 'reopened'
-            $logger.info("issue #{i}: reopening")
-            return client.reopen_issue(i)
-        end
-      when 'summary'
-        $logger.info("issue #{i}: updating title to '#{value}'")
-        return client.update_issue(i, value, issue[:body])
-      when 'description'
-        $logger.info("issue #{i}: updating issue description")
-        created_at=nil
-        updated_at=nil
-        if ticket
-          created_at = Time.at(ticket[:time] / 1e6, ticket[:time] % 1e6)
-          updated_at = Time.at(ticket[:changetime] / 1e6, ticket[:changetime] % 1e6)
-        end
-        # we have to see if the old body contains anything we have to
-        # keep in the new body
-        if not issue[:body].empty?
-          body,body_author = markdownify(nil, value, created_at, updated_at)
-          issue_author = issue[:body].scan(/(\*\*Originally .*\*\*\n\n___\n).*/)
-          if not issue_author.empty?
-            body.insert(0, "#{issue_author.last.first}")
-          end
-        else
-          body,body_author = markdownify(author, value, created_at, updated_at)
-        end
-        if body_author and body_author != author
-          client = @clients[body_author]
-        end
-        return client.update_issue(i, issue[:title], body)
-      when 'resolution', 'priority', 'component', 'type', 'version', 'severity', 'platform'
-        old_labs = issue[:labels].map { |l| l[:name] }
-        return issue unless @labels.has_key?(category)
-        t, f = @labels[category].partition { |pat, rep| pat.match(value) }
-        if t.empty?
-          if value and not value.empty?
-            $logger.warn("issue #{i}: no match for label '#{value}' in '#{category}'")
-          end
-          return issue
-        elsif t.size > 1
-          $logger.error("issue #{i}: more than one match for '#{value}' in '#{category}'")
+        # assert correct issue number
+        if issue_id != ticket[:id]
+          $logger.info("mismatch issue ##{issue_id} for ticket #{ticket[:id]}")
           exit 1
         end
-        new_labs = old_labs.reject { |lab| f.find { |pat, rep| rep == lab } }
-        if old_labs.size != new_labs.size
-          $logger.info("issue #{i}: replacing all '#{category}' labels by '#{t[0][1]}'")
-        end
-        new_label = t[0][1]
-        return issue if new_label.empty?
-        $logger.info("issue #{i}: adding label '#{new_label}'")
-        new_labs << new_label
-        new_labs_set = Set.new new_labs
-        $logger.debug("issue #{i}: updating lables to #{new_labs}")
-        return client.update_issue_opts(issue, :labels => new_labs_set.to_a)
-      when 'comment', 'changelog', 'attachment'
-        return issue if value == nil || value.empty? || value =~ /Milestone.*deleted/
-        $logger.info("issue #{i}: adding '#{category}' by '#{author}'")
-        if category == 'attachment'
-          value = ticket[:description]
-        end
-        max_len = 30
-        excerpt = value[0, max_len].gsub(/\n|\r/, ' ')
-        excerpt << '...' if value.size > max_len
-        $logger.debug("issue #{i}: comment '#{excerpt}'")
-        created_at=nil
-        if updated
-          created_at = Time.at(updated / 1e6, updated % 1e6)
-        end
-
-        # depending on the category we have to add
-        # a short marker.
-        case category
-          when 'changelog'
-            value.insert(0, "**Release Note:**\n")
-          when 'attachment'
-            text = "**Attachment added:**"
-            if @attachurl
-              url="#{@attachurl}/#{i}/#{ticket[:filename]}"
-              if [".png", ".jpg", ".gif", ".PNG", ".JPG", ".GIF"].include? File.extname(ticket[:filename])
-                text = "#{text} `#{ticket[:filename]}` (#{(ticket[:size]/1024.0).round(1)} KiB)\n![#{ticket[:filename]}](#{URI.escape(url)})"
-              else
-                text = "#{text} [`#{ticket[:filename]}`](#{URI.escape(url)}) (#{(ticket[:size]/1024.0).round(1)} KiB)"
-              end
-            else
-              text = "#{text} `#{ticket[:filename]}` (#{(ticket[:size]/1024.0).round(1)} KiB)"
-            end
-            value.insert(0, "#{text}\n")
-        end
-
-        body,body_author = markdownify(author, value, created_at)
-        if body_author and body_author != author
-          client = @clients[body_author]
-        end
-        client.add_comment(i, body)
-      when 'keywords', 'cc', 'reporter' # TODO
+      else
+        # to allow manual verification:
+        $logger.info(response['url'])
+      end
+      @last_created_issue = ticket[:id]
     end
-    return issue
   end
 
-  def markdownify(author, str, created_at=nil, updated_at=nil)
+  def compose_issue(ticket)
+
+    body = ""
+    body += "*Issue migrated from trac ticket # #{ticket[:id]}*\n\n"
+    closed = nil
+
+    # summary line:
+    body += [:component, :priority, :resolution, :keywords].map{
+        |cat| ticket[cat] and not ticket[cat].lstrip.empty? and
+              "**#{cat.to_s}:** #{ticket[cat]}"
+    }.select{|x| x}.join(" | ")
+
+    # Initial report
+    # TODO: respect ticket[:changetime]
+    body += "\n\n" if not @singlepost
+    body += ticket_change(@singlepost, {
+      ticket: ticket[:id],
+      time: ticket[:time],
+      author: ticket[:reporter],
+      field: "comment",
+      oldvalue: nil,
+      newvalue: ticket[:description],
+    })["body"]
+
+    # combine the changes and attachment table results and sort them by date
+    changes = @trac.changes.where(:ticket => ticket[:id]).collect.to_a
+    changes += @trac.attachments.where(:type => 'ticket', :id => ticket[:id]).collect.to_a
+    changes = changes.sort_by{|x| x[:time]}
+
+    # replay all changes in chronological order:
+    comments = changes.map{|x| ticket_change(@singlepost, x)}.select{|x| x}.to_a
+    if @singlepost
+      body += comments.map{|x| x["body"]}.join("\n")
+      comments = []
+    end
+
+    labels = Set[]
+    changes.each do |x|
+      del = @labels.fetch(x[:field], Hash[])[x[:oldvalue]]
+      add = @labels.fetch(x[:field], Hash[])[x[:newvalue]]
+      labels.delete(del) if del
+      labels.add(add) if add
+      if x[:field] == "status" and x[:newvalue] == "closed"
+        closed = x[:time]
+      end
+    end
+
+    issue = {
+      "title" => ticket[:summary],
+      "body" => body,
+      "labels" => labels.to_a,
+      "closed" => ticket[:status] == "closed",
+      "created_at" => format_time(ticket[:time]),
+    }
+
+    if ticket[:changetime]
+      issue["updated_at"] = format_time(ticket[:changetime])
+    end
+    if issue["closed"] and closed
+      issue["closed_at"] = format_time(closed)
+    end
+
+    return {
+      "issue" => issue,
+      "comments" => comments,
+    }
+  end
+
+  def ticket_change(append, meta)
+
+    # kind
+    if meta[:ticket]
+      kind = meta[:field]
+    else
+      kind = 'attachment'
+    end
+    kind = 'title' if kind == 'summary'
+
+    # time
+    time = meta[:time]
+    time = Time.at(time/1e6, time%1e6)
+
+    # author
+    author = meta[:author]
+    author = trac_mail(author)
+    if @users.has_key?(author)
+      author = "@" + @users[author]
+    end
+
+    text = ""
+    text += "\n___\n" if append
+    text += "#### #{time.strftime("%Y-%m-%d %H:%M:%S")}: #{author} "
+
+    case kind
+      when 'owner', 'status', 'title', 'resolution', 'priority', 'component', 'type', 'severity', 'platform'
+        old = meta[:oldvalue]
+        new = meta[:newvalue]
+        if old and new
+          text += "changed #{kind} from *#{old}* to *#{new}*"
+        elsif old
+          text += "removed #{kind} (was *#{old}*)"
+        elsif new
+          text += "set #{kind} to *#{new}*"
+        end
+
+      when 'comment'
+        body = meta[:newvalue]
+        text += "commented\n\n"
+        text += "\n___\n" if not append
+        text += markdownify(body)
+        return nil if body == nil or body.lstrip.empty?
+
+      when 'attachment'
+        text += "uploaded file "
+        name = meta[:filename]
+        body = meta[:description]
+        if @attachurl
+          url = URI.escape("#{@attachurl}/#{meta[:id]}/#{name}")
+          text += "[`#{name}`](#{url})"
+          if [".png", ".jpg", ".gif"].include? File.extname(name).downcase
+            body += "\n![#{name}](#{url})"
+          end
+        else
+          text += "`#{name}`"
+        end
+        text += " (#{(meta[:size]/1024.0).round(1)} KiB)"
+        text += "\n\n" + body
+
+      when 'description'
+        # (ticket[:description] already contains the new value,
+        # so there is no need to update)
+        text += "edited the issue description"
+
+      when 'keywords', 'cc', 'reporter', 'version'
+        # don't care
+        return nil
+    end
+
+    return {
+      "body" => text,
+      "created_at" => format_time(meta[:time]),
+    }
+  end
+
+  def markdownify(str)
     # Line endings
     str.gsub!("\r\n", "\n")
     # CommitTicketReference
@@ -389,245 +320,28 @@ class Migrator
     str.gsub!(/(^\s+)\*/, '\1-')
     str.gsub!(/(^\s+)(\d)\./, '\1\2.')
     # Changeset
-    str.gsub!(/\[changeset:"([^\]]+)".*\]/) { map_changeset(Regexp.last_match[1]) }
-    str.gsub!(/\[changeset:([^\]]+)\]/) { map_changeset(Regexp.last_match[1]) }
-    str.gsub!(/changeset:([0-9a-f]+)/) { map_changeset(Regexp.last_match[1]) }
-    str.gsub!(/\(In \[(.*)\]\)/) { "In #{map_changeset(Regexp.last_match[1])}:\n" }
+    str.gsub!(/https?:\/\/svnweb.cern.ch\/trac\/madx\/changeset\/(\d+)\/?/, '[changeset:\1]')
+    str.gsub!(/\[changeset:"r(\d+)".*\]/, '[changeset:\1]')
+    str.gsub!(/\[changeset:r(\d+)\]/,     '[changeset:\1]')
+    str.gsub!(/\[changeset:"(\d+)".*\]/) { map_changeset(Regexp.last_match[1]) }
+    str.gsub!(/\[changeset:(\d+)\]/)     { map_changeset(Regexp.last_match[1]) }
+    str.gsub!(/\br(\d+)\b/)              { map_changeset(Regexp.last_match[1]) }
     # Ticket
     str.gsub!(/ticket:(\d+)/, '#\1')
-    # Authorship & times
-    if author
-
-      # we search for "Original poster" and "Original author"
-      # and identify the real author
-      org_poster = str.scan(/Original poster: (.*)/)
-      if not org_poster.empty?
-        author = org_poster.last.first
-      end
-      org_author = str.scan(/Original author: (.*)/)
-      if not org_author.empty?
-        author = org_author.last.first
-      end
-
-      extra = "Originally"
-      if not @clients.has_key?(author)
-        if @users.has_key?(author)
-          author = @users[author]
-          extra = "#{extra} by @#{author}"
-        else
-          ## PYINSTALLER SPECIAL
-          author = "anonymous" if author == "openticket"
-
-          # Obfuscate email addresses: replace '@' and '.'
-          if @obfuscate
-            author.gsub!('@', ' AT ')
-            author.gsub!('.', ' DOT ')
-            author.gsub!('-', ' DASH ')
-            author.gsub!('com', ' COOM ')
-          end
-
-          extra = "#{extra} by _#{author}_"
-        end
-      end
-      if created_at
-        extra = "#{extra} on #{created_at.strftime("%Y-%m-%d %H:%M:%S %z")}"
-      else
-        if updated_at
-          extra = "#{extra} updated on #{created_at.strftime("%Y-%m-%d %H:%M:%S %z")}"
-        end
-      end
-
-      unless extra.empty?
-        str.insert(0, "**#{extra}**\n\n___\n")
-      end
-
-      # Reply
-      str_replyto = str.scan(/Replying to \[.*:.* (.*)\]:/)
-      if not str_replyto.empty?
-        replyto = str_replyto.last.first
-        user = nil
-        if @users.has_key?(replyto)
-          user = @users[replyto]
-        end
-        if user and not user.empty?
-          str.gsub!(/Replying to \[.*:.* (.*)\]:/, "@#{user}")
-        else
-          str.gsub!(/Replying to \[.*:.* (.*)\]:/, 'Replying to \1:')
-        end
-      end
-    end
-    # strip sf.net conversion markers
-    str.gsub!(/^----\nMoved from SF.*\n*.*$/, '')
-    str.gsub!(/^Moved from SF.*\n*.*$/, '')
-
-    return str, author
+    return str
   end
 end
 
 class Trac
-  attr_reader :milestones, :tickets, :changes, :customs, :sessions, :attachments
+  attr_reader :tickets, :changes, :sessions, :attachments
   def initialize(db)
-    $logger.info('loading milestones and tickets')
+    $logger.info('loading tickets')
     @db = db
-    @milestones = @db[:milestone]
     @tickets = @db[:ticket]
     @changes = @db[:ticket_change]
-    @customs = @db[:ticket_custom]
     @sessions = @db[:session_attribute]
     @attachments = @db[:attachment]
   end
-end
-
-class GitHub
-  def initialize(user, pass, repo)
-    @user = user
-    $logger.debug("#{@user} connects to github repo '#{repo}'")
-    Octokit.auto_paginate = true
-    @client = Octokit::Client.new(:login => @user, :password => pass)
-    @repo = repo
-  end
-
-  def collaborators
-    rate_check
-    @client.collaborators(@repo)
-  end
-
-  def list_milestones
-    rate_check
-    open = @client.list_milestones(@repo, :state => 'open')
-    closed = @client.list_milestones(@repo, :state => 'closed')
-    open + closed
-  end
-
-  def issue(*args)
-    rate_check
-    @client.issue(@repo, *args)
-  end
-
-  def create_milestone(*args)
-    rate_check
-    @client.create_milestone(@repo, *args)
-  end
-
-  def list_issues
-    $logger.debug("#{@user} fetches all open issues in #{@repo}")
-    open = fetch_pagewise { |i| @client.list_issues(@repo, :page => i) }
-    closed = fetch_pagewise do |i|
-      rate_check
-      @client.list_issues(@repo, {:state => 'closed', :page => i})
-    end
-    open + closed
-  end
-
-  def create_issue(*args)
-    $logger.debug("#{@user} creates issue '#{args[0]}'")
-    if args[1].size > 2**16
-      msg = "\n\n*(issue truncated due to size)*"
-      $logger.warn("truncating issue '#{args[0]}' (#{args[1].size} bytes)")
-      args[1] = args[1][0, 65300] + msg
-    end
-    begin
-      rate_check
-      @client.create_issue(@repo, *args)
-    rescue Octokit::AbuseDetected
-      $logger.warn("Github abuse detection triggered. Retrying in 5 min...")
-      sleep 5*60
-      retry
-    rescue
-      $logger.error("problem creating issue.")
-    end
-  end
-
-  def update_issue(*args)
-    begin
-      rate_check
-      @client.update_issue(@repo, *args)
-    rescue Octokit::AbuseDetected
-      $logger.warn("issue #{args[0]}: Github abuse detection triggered. Retrying in 5 min...")
-      sleep 5*60
-      retry
-    rescue
-      $logger.error("issue #{args[0]}: problem updating issue.")
-    end
-  end
-
-  def close_issue(*args)
-    begin
-      rate_check
-      @client.close_issue(@repo, *args)
-    rescue Octokit::AbuseDetected
-      $logger.warn("issue #{args[0]}: Github abuse detection triggered. Retrying in 5 min...")
-      sleep 5*60
-      retry
-    rescue
-      $logger.error("issue #{args[0]}: can't close issue.")
-    end
-  end
-
-  def reopen_issue(*args)
-    begin
-      rate_check
-      @client.reopen_issue(@repo, *args)
-    rescue Octokit::AbuseDetected
-      $logger.warn("issue #{args[0]}: Github abuse detection triggered. Retrying in 5 min...")
-      sleep 5*60
-      retry
-    rescue
-      $logger.warn("issue #{args[0]}: can't reopen issue.")
-    end
-  end
-
-  def add_comment(*args)
-    begin
-      rate_check
-      @client.add_comment(@repo, *args)
-    rescue
-      $logger.warn("issue #{args[0]}: problem with saving comment. Retrying in 5 min...")
-      sleep 5*60
-      retry
-    end
-  end
-
-  def update_issue_opts(issue, opts)
-    update_issue(issue[:number], issue[:title], issue[:body], opts)
-  end
-
-  def emails(opts = {})
-    @client.emails(opts)
-  end
-
-  def login
-    @client.login
-  end
-
-  private
-
-  def fetch_pagewise
-    result = []
-    begin
-      i = 1;
-      loop do
-        $logger.debug("fetching page #{i}")
-        page = yield i
-        break if page.empty?
-        result += page
-        i += 1
-      end
-    end
-    $logger.debug("fetched #{result.size} elements")
-    result
-  end
-
-  def rate_check
-    limit = @client.rate_limit.limit
-    remaining = @client.rate_limit.remaining
-    $logger.debug("#{remaining}/#{limit} operations available. Resets in: #{@client.rate_limit.resets_in}s")
-    while @client.rate_limit.remaining < 100
-      $logger.info("less than #{bound} operations viable, sleeping (#{@client.rate_limit.resets_in}s)...")
-      sleep 10
-    end
-  end
-
 end
 
 class Options < Hash
@@ -638,19 +352,12 @@ class Options < Hash
       opts.on('-c config', '--config', 'set the configuration file') do |c|
         self[:config] = c
       end
-      opts.on('-d', '--deduplicate',
-              'do not migrate tickets w/ duplicate titles') do |d|
-        self[:deduplicate] = d
-      end
       opts.on_tail('-h', '--help', 'display this help and exit') do |help|
         puts(opts)
         exit
       end
       opts.on('-s', '--start-at ID', 'start migration from ticket with number <ID>') do |id|
         self[:start] = id
-      end
-      opts.on('-o', '--obfuscate', 'obfuscate inserted email addresses') do |ob|
-        self[:obfuscate] = ob
       end
       opts.on('-r', '--rev-map-file FILE',
               'allows to specify a commit revision mapping FILE') do |file|
@@ -659,6 +366,14 @@ class Options < Hash
       opts.on('-a', '--attachment-url URL',
               'if attachment files are reachable via a URL we reference this here') do |url|
         self[:attachurl] = url
+      end
+      opts.on('-S', '--single-post',
+              'Put all issue comments in the first message.') do |single|
+        self[:singlepost] = single
+      end
+      opts.on('-F', '--fast-import',
+              'Import without safety-checking issue numbers.') do |fast|
+        self[:fast] = fast
       end
       begin
         opts.parse!(argv)
@@ -702,26 +417,20 @@ if __FILE__ == $0
   # load revision mapping file and convert it to a hash.
   # This revmap file allows to map between SVN revisions (rXXXX)
   # and git commit sha1 hashes.
+  revmap = nil
   if opts[:revmapfile]
-    revmap = Hash.new()
-    f = File.open(opts[:revmapfile], "r")
-    f.each_line do |line|
-      array = line.split(/\s+/)
-
-      # SVN revision can start with a 'rXXXX"
-      array[0].gsub!(/^r(.*)/, '\1')
-
-      # git commit sha can be striped down to 7 characters for
-      # proper reference in Github
-      array[1] = array[1].to_s[0...7]
-
-      # lets put this into the hash map
-      revmap[array[0]] = array[1]
+    File.open(opts[:revmapfile], "r") do |f|
+      $logger.info(opts[:revmapfile])
+      revmap = Hash[f.lines
+        .map {|line|    line.split(/\s+/)}
+        .map {|rev,sha| [rev.gsub(/^r/, ''), sha]}  # remove leading "r" if present
+      ]
     end
-    f.close
   end
 
   trac = Trac.new(db)
-  migrator = Migrator.new(trac, cfg['github'], cfg['users'], cfg['labels'], opts[:deduplicate], opts[:obfuscate], revmap, opts[:attachurl])
+  migrator = Migrator.new(
+      trac, cfg['github'], cfg['users'], cfg['labels'], revmap,
+      opts[:attachurl], opts[:singlepost], (not opts[:fast]))
   migrator.migrate(opts[:start])
 end

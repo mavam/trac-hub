@@ -2,8 +2,8 @@ trac-hub
 ========
 
 **trac-hub** converts [trac](http://trac.edgewall.org/) tickets into github
-issues. To this end, it accesses trac's underlying database and copies over
-milestones, creates tickets, and replays the change history of each ticket.
+issues. To this end, it accesses trac's underlying database to create tickets
+and post the change history of each ticket as comments.
 
 Synopsis
 --------
@@ -34,15 +34,54 @@ To resume the migration at a given trac ticket ID, use `-s`:
 
     ./trac-hub -s 42
 
-One can also avoid migration of tickets whose title exists already in the
-github issue tracker:
+If you want all trac comments/changes to be compiled into a single post on the
+github issue:
 
-    ./trac-hub -d
+    ./trac-hub -S
 
 *Note*: when converting your trac setup to github, it is prudent to first try
 the migration into a test repository which you can delete afterwards. If this
 worked out fine and delivered the expected results, one can still aim the
 script at the real repository.
+
+Issue numbers
+-------------
+
+By default, trac-hub will verify that the created issue numbers match the
+ticket IDs of the corresponding trac ticket and error-exit if the number is
+off.
+
+If you need this behaviour, you should also disable user interactions by
+setting **Limit to repository collaborators** under your repository settings.
+Alternatively, when migrating issues to a new repository, import the issues on
+a test-repository and rename the repository to the final name when the import
+went satisfactory.
+
+You can disable this check by using the *fast* option:
+
+    ./trac-hub -F
+
+This will also make your import much faster (but after the script has
+finished, it can still take some time until the issues are created on github).
+
+Using this option is obligatory, if you know that the ticket IDs will not
+match, e.g. because non-trac tickets already exist. In this case, you must
+also specify the ID of the first ticket to be migrated (even if it is 1):
+
+    ./trac-hub -F -s 1
+
+Technology
+----------
+
+It uses uses github's new [issue import
+API](https://gist.github.com/jonmagic/5282384165e0f86ef105) to create issues
+
+- without hitting abuse detection warnings and getting blocked
+- without sending email notifications
+- without increasing your contribution count to ridiculous heights
+- much faster than with the [normal issues API](https://developer.github.com/v3/issues/)
+- with correct creation/closed date set
+- atomically without users being able to interfere in the creation of a single issue
 
 Configuration
 -------------
@@ -53,14 +92,13 @@ described [here](http://sequel.jeremyevans.net/rdoc/classes/Sequel.html#method-c
 In order to use databases other than sqlite, you may have to add them to the
 `Gemfile`. For mysql databases, you should use the mysql2 adapter.
 
-The section `github` includes the repository to migrate as well as a list of
-github account credentials. The latter enables creating issues/comments under
-the corresponding github user. If trac-hub cannot map a trac user to a github
-user, it defaults to the first account entry. 
+The section `github` includes the repository to migrate as well an API token
+which can be generated under [Settings -> Personal Access
+Tokens](https://github.com/settings/tokens).
 
 The section `labels` allows for custom label mappings. Since github's issue
 tracker does not have a first-class notion of ticket priority, type, and
-version information, trac-hub supports expressing these in the form of labels. 
+version information, trac-hub supports expressing these in the form of labels.
 
 The section `users` contains a one-to-one mapping between trac usernames or
 email addresses and github usernames for users for which no github credentials

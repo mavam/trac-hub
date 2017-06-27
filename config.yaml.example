@@ -4,12 +4,29 @@ trac:
 
 github:
   repo: 'mavam/test'
-  logins:
-    - ['mavam', 'pass', ['mavam@github.com', 'mail@mavam.com']]
-    - ['collaborator1', 'pass', ['email@mydomain.com‘, 'alias']]
-    - ['collaborator2', 'pass', ['email@myname.com', 'aliasname']]
- 
+  token: '49b1c8d34401abc06040cf64bf9a8bfed5f30ca9'
+
+users:
+  matthias: mavam
+  vallenti: mavam
+
 labels:
+  type:
+    Feature Request:    feature request
+    Defect:             defect
+    Task:               task
+  component:
+    configuration:      conf
+    documentation:      doc
+  resolution:
+    Invalid:            invalid
+    Duplicate:          duplicate
+    Wontfix:            wontfix
+  platform:
+    Linux:              Linux
+    Windows:            Windows
+
+  # less useful, but also possible:
   priority:
     Low:                '@low'
     High:               '@high'
@@ -19,29 +36,6 @@ labels:
     major:              '#major'
     minor:              '#minor'
     trivial:            '#trivial'
-  type:
-    Feature Request:    feature request
-    Task:               task
-    Fastpath:           fastpath
-    Problem:            problem
-    '[Pp]atch':         patch
-    Test Case Missing:  test missing
-  component:
-    configuration:      Configuration
-    documentation:      Documentation
   version:
-    '1\.3':             v1.3
-    '1\.4':             v1.4
-    git/master:         git/master
-  resolution:
-    Rejected:           rejected
-    Invalid:            invalid
-    Duplicate:          duplicate
-    Works for Me:       works for me
-  platform:
-    Linux:              Linux
-    Windows:            Windows
-
-users:
-  matthias: mavam
-  vallenti: mavam
+    '1.3':              v1.3
+    '1.4':              v1.4
