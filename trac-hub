@@ -42,8 +42,7 @@ class Migrator
     @trac = trac
     @repo = github['repo']
     @token = github["token"]
-    $logger.info('Retrieving e-mails for users with a valid login')
-    @client = GitHub.new(github["user"], github["pass"], @repo)
+    @client = GitHub.new(@repo)
 
     @users = Hash[users]
     @labels = Hash[labels.map { |cat, rx| [cat, Hash[rx] ] }]
@@ -322,11 +321,10 @@ class Trac
 end
 
 class GitHub
-  def initialize(user, pass, repo)
-    @user = user
-    $logger.debug("#{@user} connects to github repo '#{repo}'")
+  def initialize(repo)
+    $logger.debug("Connect to github repo '#{repo}'")
     Octokit.auto_paginate = true
-    @client = Octokit::Client.new(:login => @user, :password => pass)
+    @client = Octokit::Client.new()
     @repo = repo
   end
 
@@ -336,47 +334,13 @@ class GitHub
   end
 
   def list_issues
-    $logger.debug("#{@user} fetches all open issues in #{@repo}")
-    open = fetch_pagewise { |i| @client.list_issues(@repo, :page => i) }
+    $logger.debug("Fetch all open issues in #{@repo}")
+    open = fetch_pagewise { |i| @client.list_issues(@repo, :page => i, ) }
     closed = fetch_pagewise do |i|
       rate_check
       @client.list_issues(@repo, {:state => 'closed', :page => i})
     end
     open + closed
-  end
-
-  def create_issue(*args)
-    $logger.debug("#{@user} creates issue '#{args[0]}'")
-    if args[1].size > 2**16
-      msg = "\n\n*(issue truncated due to size)*"
-      $logger.warn("truncating issue '#{args[0]}' (#{args[1].size} bytes)")
-      args[1] = args[1][0, 65300] + msg
-    end
-    begin
-      rate_check
-      @client.create_issue(@repo, *args)
-    rescue Octokit::AbuseDetected
-      delay = 15
-      $logger.warn("Github abuse detection triggered. Retrying in #{delay} min...")
-      sleep delay*60
-      retry
-    rescue
-      $logger.error("problem creating issue.")
-    end
-  end
-
-  def close_issue(*args)
-    begin
-      rate_check
-      @client.close_issue(@repo, *args)
-    rescue Octokit::AbuseDetected
-      delay = 15
-      $logger.warn("Github abuse detection triggered. Retrying in #{delay} min...")
-      sleep delay*60
-      retry
-    rescue
-      $logger.error("issue #{args[0]}: can't close issue.")
-    end
   end
 
   private
