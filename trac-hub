@@ -37,7 +37,7 @@ class GracefulQuit
 end
 
 class Migrator
-  def initialize(trac, github, users, labels, revmap, attachurl, singlepost)
+  def initialize(trac, github, users, labels, revmap, attachurl, singlepost, safetychecks)
     @trac = trac
     @repo = github['repo']
     @token = github["token"]
@@ -58,6 +58,7 @@ class Migrator
     @revmap = revmap
     @attachurl = attachurl
     @singlepost = singlepost
+    @safetychecks = safetychecks
   end
 
   def migrate(start_ticket = -1)
@@ -99,13 +100,18 @@ class Migrator
     $logger.info('migrating issues')
     # We match the issue title to determine whether an issue exists already.
     @trac.tickets.order(:id).where{id >= start_ticket}.all.each do |ticket|
+      GracefulQuit.check("quitting after processing ticket ##{@last_created_issue}")
 
-      begin
+      if @safetychecks; begin
         # issue exists already:
         issue = JSON.parse(RestClient.get(
             "https://api.github.com/repos/#{@repo}/issues/#{ticket[:id]}"))
         $logger.info("found ticket #{ticket[:id]}")
+        next
       rescue
+      end end
+
+      begin
         $logger.info("creating issue #{ticket[:id]} (#{ticket[:reporter]})")
 
         # API details: https://gist.github.com/jonmagic/5282384165e0f86ef105
@@ -116,7 +122,9 @@ class Migrator
           {"Authorization" => "token #{@token}",
            "Content-Type" => "application/json",
            "Accept" => "application/vnd.github.golden-comet-preview+json"}))
+      end
 
+      if @safetychecks
         while response["status"] == "pending"
           sleep 0.1
           $logger.info("Checking import status: #{response['id']}")
@@ -134,9 +142,11 @@ class Migrator
           $logger.info("mismatch issue ##{issue_id} for ticket #{ticket[:id]}")
           exit 1
         end
-        @last_created_issue = ticket[:id]
-        GracefulQuit.check("quitting after completing #{@last_created_issue}")
+      else
+        # to allow manual verification:
+        $logger.info(response['url'])
       end
+      @last_created_issue = ticket[:id]
     end
   end
 
@@ -361,6 +371,10 @@ class Options < Hash
               'Put all issue comments in the first message.') do |single|
         self[:singlepost] = single
       end
+      opts.on('-F', '--fast-import',
+              'Import without safety-checking issue numbers.') do |fast|
+        self[:fast] = fast
+      end
       begin
         opts.parse!(argv)
         if not self[:config]
@@ -417,6 +431,6 @@ if __FILE__ == $0
   trac = Trac.new(db)
   migrator = Migrator.new(
       trac, cfg['github'], cfg['users'], cfg['labels'], revmap,
-      opts[:attachurl], opts[:singlepost])
+      opts[:attachurl], opts[:singlepost], (not opts[:fast]))
   migrator.migrate(opts[:start])
 end
