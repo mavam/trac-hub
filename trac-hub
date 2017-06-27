@@ -2,7 +2,6 @@
 
 require 'json'
 require 'logger'
-require 'octokit'
 require 'rest-client'
 require 'optparse'
 require 'sequel'
@@ -42,8 +41,6 @@ class Migrator
     @trac = trac
     @repo = github['repo']
     @token = github["token"]
-    $logger.debug("Connect to github repo '#{@repo}'")
-    @client = Octokit::Client.new()
 
     @users = Hash[users]
     @labels = Hash[labels.map { |cat, rx| [cat, Hash[rx] ] }]
@@ -51,9 +48,11 @@ class Migrator
     @trac_mails_cache = Hash.new
 
     $logger.debug("Get highest in #{@repo}")
-    issues = @client.list_issues(@repo, :filter => "all", :state => "all",
-                                 :sort => "created", :direction => "desc")
-    @last_created_issue = issues.empty? ? 0 : issues[0][:number]
+    issues = JSON.parse(RestClient.get(
+        "https://api.github.com/repos/#{@repo}/issues",
+        {params: {filter: "all", state: "all", sort: "created", direction: "desc"}}))
+    @last_created_issue = issues.empty? ? 0 : issues[0]["number"].to_i
+
     $logger.info("Last created issue on GitHub is '#{@last_created_issue}'")
 
     @revmap = revmap
@@ -103,7 +102,8 @@ class Migrator
 
       begin
         # issue exists already:
-        issue = @client.issue(ticket[:id])
+        issue = JSON.parse(RestClient.get(
+            "https://api.github.com/repos/#{@repo}/issues/#{ticket[:id]}"))
         $logger.info("found ticket #{ticket[:id]}")
       rescue
         $logger.info("creating issue #{ticket[:id]} (#{ticket[:reporter]})")
