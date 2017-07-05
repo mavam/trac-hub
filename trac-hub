@@ -165,14 +165,17 @@ class Migrator
     # Initial report
     # TODO: respect ticket[:changetime]
     body += "\n\n" if not @singlepost
-    body += ticket_change(@singlepost, {
+    desc = ticket_change(@singlepost, {
       ticket: ticket[:id],
       time: ticket[:time],
       author: ticket[:reporter],
       field: "comment",
       oldvalue: nil,
       newvalue: ticket[:description],
-    })["body"]
+    })
+    if desc != nil
+      body += desc["body"]
+    end
 
     # combine the changes and attachment table results and sort them by date
     changes = @trac.changes.where(:ticket => ticket[:id]).collect.to_a
