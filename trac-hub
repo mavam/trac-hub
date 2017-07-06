@@ -173,9 +173,7 @@ class Migrator
       oldvalue: nil,
       newvalue: ticket[:description],
     })
-    if desc != nil
-      body += desc["body"]
-    end
+    body += desc["body"] if desc
 
     # combine the changes and attachment table results and sort them by date
     changes = @trac.changes.where(:ticket => ticket[:id]).collect.to_a
