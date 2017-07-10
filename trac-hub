@@ -169,7 +169,7 @@ class Migrator
       ticket: ticket[:id],
       time: ticket[:time],
       author: ticket[:reporter],
-      field: "comment",
+      field: :initial,
       oldvalue: nil,
       newvalue: ticket[:description],
     })["body"]
@@ -255,11 +255,19 @@ class Migrator
           text += "set #{kind} to *#{new}*"
         end
 
+      when :initial
+        body = meta[:newvalue]
+        text += "created the issue\n\n"
+        if body and not body.lstrip.empty?
+            text += "\n___\n" if not append
+            text += markdownify(body)
+        end
+
       when 'comment'
         body = meta[:newvalue]
         text += "commented\n\n"
         text += "\n___\n" if not append
-        text += markdownify(body)
+        text += markdownify(body) if body
         return nil if body == nil or body.lstrip.empty?
 
       when 'attachment'
