@@ -204,6 +204,14 @@ class Migrator
         closed = x[:time]
       end
     end
+    labels.add(@labels.fetch('component', Hash[])[ticket[:component]])
+    labels.add(@labels.fetch('type', Hash[])[ticket[:type]])
+    labels.add(@labels.fetch('resolution', Hash[])[ticket[:resolution]])
+    labels.add(@labels.fetch('priority', Hash[])[ticket[:priority]])
+    labels.add(@labels.fetch('severity', Hash[])[ticket[:severity]])
+    labels.add(@labels.fetch('version', Hash[])[ticket[:version]])
+    # If the field is not set, it will be nil and generate an unprocessable json
+    labels.delete(nil)
 
     issue = {
       "title" => ticket[:summary],
