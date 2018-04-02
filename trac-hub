@@ -391,6 +391,9 @@ class Options < Hash
               'Import without safety-checking issue numbers.') do |fast|
         self[:fast] = fast
       end
+      opts.on('-v', '--verbose', 'verbose mode') do |v|
+        self[:verbose] = v
+      end
       begin
         opts.parse!(argv)
         if not self[:config]
