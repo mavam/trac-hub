@@ -68,12 +68,12 @@ class Migrator
     @safetychecks = safetychecks
   end
 
-  def migrate(start_ticket = -1)
+  def migrate(start_ticket = -1, filterout_closed = false)
     if start_ticket == -1
       start_ticket = @last_created_issue+1
     end
     GracefulQuit.enable
-    migrate_tickets(start_ticket)
+    migrate_tickets(start_ticket, filterout_closed)
   end
 
   private
@@ -103,10 +103,11 @@ class Migrator
   end
 
   # Creates github issues for trac tickets.
-  def migrate_tickets(start_ticket)
+  def migrate_tickets(start_ticket, filterout_closed)
     $logger.info('migrating issues')
     # We match the issue title to determine whether an issue exists already.
     @trac.tickets.order(:id).where{id >= start_ticket}.all.each do |ticket|
+      next if filterout_closed and ticket[:status] == "closed"
       GracefulQuit.check("quitting after processing ticket ##{@last_created_issue}")
 
       if @safetychecks; begin
@@ -399,6 +400,8 @@ class Options < Hash
               'Import without safety-checking issue numbers.') do |fast|
         self[:fast] = fast
       end
+      opts.on('-o', '--opened-only', 'Skips the import of closed tickets') do |o|
+        self[:openedonly] = o
       opts.on('-v', '--verbose', 'verbose mode') do |v|
         self[:verbose] = v
       end
@@ -459,5 +462,5 @@ if __FILE__ == $0
   migrator = Migrator.new(
       trac, cfg['github'], cfg['users'], cfg['labels'], revmap,
       opts[:attachurl], opts[:singlepost], (not opts[:fast]))
-  migrator.migrate(opts[:start])
+  migrator.migrate(opts[:start], opts[:openedonly])
 end
