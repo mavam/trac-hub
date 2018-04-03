@@ -30,6 +30,10 @@ Add the `-v` flag for more verbose output:
 
     ./trac-hub -v
 
+Add the `-o` flag to only import the tickets that are not in a `closed` status:
+
+    ./trac-hub -o
+
 To resume the migration at a given trac ticket ID, use `-s`:
 
     ./trac-hub -s 42

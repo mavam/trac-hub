@@ -405,6 +405,7 @@ class Options < Hash
       end
       opts.on('-o', '--opened-only', 'Skips the import of closed tickets') do |o|
         self[:openedonly] = o
+      end
       opts.on('-v', '--verbose', 'verbose mode') do |v|
         self[:verbose] = v
       end
