@@ -348,9 +348,9 @@ class Migrator
     str.gsub!(/https?:\/\/svnweb.cern.ch\/trac\/madx\/changeset\/(\d+)\/?/, '[changeset:\1]')
     str.gsub!(/\[changeset:"r(\d+)".*\]/, '[changeset:\1]')
     str.gsub!(/\[changeset:r(\d+)\]/,     '[changeset:\1]')
+    str.gsub!(/\br(\d+)\b/)              { map_changeset(Regexp.last_match[1]) }
     str.gsub!(/\[changeset:"(\d+)".*\]/) { map_changeset(Regexp.last_match[1]) }
     str.gsub!(/\[changeset:(\d+)\]/)     { map_changeset(Regexp.last_match[1]) }
-    str.gsub!(/\br(\d+)\b/)              { map_changeset(Regexp.last_match[1]) }
     # Ticket
     str.gsub!(/ticket:(\d+)/, '#\1')
     # set the body as a comment
