@@ -361,7 +361,7 @@ class Migrator
     str.gsub!(/\=\=\=\=\s(.+?)\s\=\=\=\=/, '#### \1')
     str.gsub!(/\=\=\=\s(.+?)\s\=\=\=/, '### \1')
     str.gsub!(/\=\=\s(.+?)\s\=\=/, '## \1')
-    str.gsub!(/\=\s(.+?)\s\=[\s\n]*/, '# \1')
+    str.gsub!(/\=\s(.+?)\s\=/, '# \1')
     # Links
     str.gsub!(/\[(http[^\s\[\]]+)\s([^\[\]]+)\]/, '[\2](\1)')
     str.gsub!(/\!(([A-Z][a-z0-9]+){2,})/, '\1')
@@ -383,8 +383,8 @@ class Migrator
     # Ticket
     str.gsub!(/ticket:(\d+)/, '#\1')
     # set the body as a comment
-    str.gsub!("\n", "\n> ")
-    str = "> #{str}"
+    #str.gsub!("\n", "\n> ")
+    #str = "> #{str}"
     return str
   end
 end
