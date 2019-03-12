@@ -9,6 +9,7 @@ require 'yaml'
 require 'set'
 require 'singleton'
 require 'uri'
+require 'pry'
 
 class GracefulQuit
   include Singleton
@@ -38,33 +39,33 @@ end
 
 class Migrator
   def initialize(trac, github, users, labels, revmap, attachurl, singlepost, safetychecks)
-    @trac = trac
-    @repo = github['repo']
+    @trac  = trac
+    @repo  = github['repo']
     @token = github["token"]
 
-    @users = Hash[users]
+    @users            = Hash[users]
     @labels = Hash[labels.map { |cat, rx| [cat, Hash[rx] ] }]
-    @ticket_to_issue = {}
+    @ticket_to_issue  = {}
     @trac_mails_cache = Hash.new
 
     $logger.debug("Get highest in #{@repo}")
-    issues = JSON.parse(RestClient.get(
+    issues              = JSON.parse(RestClient.get(
         "https://api.github.com/repos/#{@repo}/issues",
         {"Authorization" => "token #{@token}",
-         params: {
-            filter: "all",
-            state: "all",
-            sort: "created",
-            direction: "desc",
-        }}
+         params:         {
+             filter:    "all",
+             state:     "all",
+             sort:      "created",
+             direction: "desc",
+         }}
     ))
     @last_created_issue = issues.empty? ? 0 : issues[0]["number"].to_i
 
     $logger.info("Last created issue on GitHub is '#{@last_created_issue}'")
 
-    @revmap = revmap
-    @attachurl = attachurl
-    @singlepost = singlepost
+    @revmap       = revmap
+    @attachurl    = attachurl
+    @singlepost   = singlepost
     @safetychecks = safetychecks
   end
 
@@ -111,26 +112,26 @@ class Migrator
       GracefulQuit.check("quitting after processing ticket ##{@last_created_issue}")
 
       if @safetychecks; begin
-        # issue exists already:
-        issue = JSON.parse(RestClient.get(
-            "https://api.github.com/repos/#{@repo}/issues/#{ticket[:id]}",
-            {"Authorization" => "token #{@token}"}))
-        $logger.info("found ticket #{ticket[:id]}")
-        next
-      rescue
+          # issue exists already:
+          issue = JSON.parse(RestClient.get(
+              "https://api.github.com/repos/#{@repo}/issues/#{ticket[:id]}",
+              {"Authorization" => "token #{@token}"}))
+          $logger.info("found ticket #{ticket[:id]}")
+          next
+        rescue
       end end
 
       begin
         $logger.info("creating issue #{ticket[:id]} (#{ticket[:reporter]})")
 
         # API details: https://gist.github.com/jonmagic/5282384165e0f86ef105
-        request = compose_issue(ticket)
+        request  = compose_issue(ticket)
         response = JSON.parse(RestClient.post(
-          "https://api.github.com/repos/#{@repo}/import/issues",
-          request.to_json,
-          {"Authorization" => "token #{@token}",
-           "Content-Type" => "application/json",
-           "Accept" => "application/vnd.github.golden-comet-preview+json"}))
+            "https://api.github.com/repos/#{@repo}/import/issues",
+            request.to_json,
+            {"Authorization" => "token #{@token}",
+             "Content-Type"  => "application/json",
+             "Accept"        => "application/vnd.github.golden-comet-preview+json"}))
       end
 
       if @safetychecks
@@ -138,8 +139,8 @@ class Migrator
           sleep 0.1
           $logger.info("Checking import status: #{response['id']}")
           response = JSON.parse(RestClient.get(response['url'], {
-            "Authorization" => "token #{@token}",
-            "Accept" => "application/vnd.github.golden-comet-preview+json"}))
+              "Authorization" => "token #{@token}",
+              "Accept"        => "application/vnd.github.golden-comet-preview+json"}))
         end
         $logger.info("Status: #{response['status']}")
         issue_id = response["issue_url"].match(/\d+$/).to_s.to_i
@@ -161,7 +162,7 @@ class Migrator
 
   def compose_issue(ticket)
 
-    body = ""
+    body   = ""
     body += "*Issue migrated from trac ticket # #{ticket[:id]}*\n\n"
     closed = nil
 
@@ -175,12 +176,12 @@ class Migrator
     # TODO: respect ticket[:changetime]
     body += "\n\n" if not @singlepost
     body += ticket_change(@singlepost, {
-      ticket: ticket[:id],
-      time: ticket[:time],
-      author: ticket[:reporter],
-      field: :initial,
-      oldvalue: nil,
-      newvalue: ticket[:description],
+        ticket:   ticket[:id],
+        time:     ticket[:time],
+        author:   ticket[:reporter],
+        field:    :initial,
+        oldvalue: nil,
+        newvalue: ticket[:description],
     })["body"]
 
     # combine the changes and attachment table results and sort them by date
@@ -215,11 +216,11 @@ class Migrator
     labels.delete(nil)
 
     issue = {
-      "title" => ticket[:summary],
-      "body" => body,
-      "labels" => labels.to_a,
-      "closed" => ticket[:status] == "closed",
-      "created_at" => format_time(ticket[:time]),
+        "title"      => ticket[:summary],
+        "body"       => body,
+          "labels"     => labels.to_a,
+        "closed"     => ticket[:status] == "closed",
+        "created_at" => format_time(ticket[:time]),
     }
 
     if ticket[:changetime]
@@ -230,8 +231,8 @@ class Migrator
     end
 
     return {
-      "issue" => issue,
-      "comments" => comments,
+        "issue"    => issue,
+        "comments" => comments,
     }
   end
 
@@ -261,61 +262,61 @@ class Migrator
     text += "#### #{time.strftime("%Y-%m-%d %H:%M:%S")}: #{author} "
 
     case kind
-      when 'owner', 'status', 'title', 'resolution', 'priority', 'component', 'type', 'severity', 'platform'
-        old = meta[:oldvalue]
-        new = meta[:newvalue]
-        if old and new
-          text += "changed #{kind} from *#{old}* to *#{new}*"
-        elsif old
-          text += "removed #{kind} (was *#{old}*)"
-        elsif new
-          text += "set #{kind} to *#{new}*"
-        end
+    when 'owner', 'status', 'title', 'resolution', 'priority', 'component', 'type', 'severity', 'platform'
+      old = meta[:oldvalue]
+      new = meta[:newvalue]
+      if old and new
+        text += "changed #{kind} from *#{old}* to *#{new}*"
+      elsif old
+        text += "removed #{kind} (was *#{old}*)"
+      elsif new
+        text += "set #{kind} to *#{new}*"
+      end
 
-      when :initial
-        body = meta[:newvalue]
-        text += "created the issue\n\n"
-        if body and not body.lstrip.empty?
-            text += "\n___\n" if not append
-            text += markdownify(body)
-        end
-
-      when 'comment'
-        body = meta[:newvalue]
-        text += "commented\n\n"
+    when :initial
+      body = meta[:newvalue]
+      text += "created the issue\n\n"
+      if body and not body.lstrip.empty?
         text += "\n___\n" if not append
-        text += markdownify(body) if body
-        return nil if body == nil or body.lstrip.empty?
+        text += markdownify(body)
+      end
 
-      when 'attachment'
-        text += "uploaded file "
-        name = meta[:filename]
-        body = meta[:description]
-        if @attachurl
-          url = URI.escape("#{@attachurl}/#{meta[:id]}/#{name}")
-          text += "[`#{name}`](#{url})"
-          if [".png", ".jpg", ".gif"].include? File.extname(name).downcase
-            body += "\n![#{name}](#{url})"
-          end
-        else
-          text += "`#{name}`"
+    when 'comment'
+      body = meta[:newvalue]
+      text += "commented\n\n"
+      text += "\n___\n" if not append
+      text += markdownify(body) if body
+      return nil if body == nil or body.lstrip.empty?
+
+    when 'attachment'
+      text += "uploaded file "
+      name = meta[:filename]
+      body = meta[:description]
+      if @attachurl
+        url  = URI.escape("#{@attachurl}/#{meta[:id]}/#{name}")
+        text += "[`#{name}`](#{url})"
+        if [".png", ".jpg", ".gif"].include? File.extname(name).downcase
+          body += "\n![#{name}](#{url})"
         end
+      else
+        text += "`#{name}`"
+      end
         text += " (#{(meta[:size]/1024.0).round(1)} KiB)"
-        text += "\n\n" + body
+      text += "\n\n" + body
 
-      when 'description'
-        # (ticket[:description] already contains the new value,
-        # so there is no need to update)
-        text += "edited the issue description"
+    when 'description'
+      # (ticket[:description] already contains the new value,
+      # so there is no need to update)
+      text += "edited the issue description"
 
-      when 'keywords', 'cc', 'reporter', 'version'
-        # don't care
-        return nil
+    when 'keywords', 'cc', 'reporter', 'version'
+      # don't care
+      return nil
     end
 
     return {
-      "body" => text,
-      "created_at" => format_time(meta[:time]),
+        "body"       => text,
+        "created_at" => format_time(meta[:time]),
     }
   end
 
@@ -347,10 +348,11 @@ class Migrator
     # Changeset
     str.gsub!(/https?:\/\/svnweb.cern.ch\/trac\/madx\/changeset\/(\d+)\/?/, '[changeset:\1]')
     str.gsub!(/\[changeset:"r(\d+)".*\]/, '[changeset:\1]')
-    str.gsub!(/\[changeset:r(\d+)\]/,     '[changeset:\1]')
-    str.gsub!(/\br(\d+)\b/)              { map_changeset(Regexp.last_match[1]) }
+    str.gsub!(/\[changeset:r(\d+)\]/, '[changeset:\1]')
+    str.gsub!(/\br(\d+)\b/) { map_changeset(Regexp.last_match[1]) }
     str.gsub!(/\[changeset:"(\d+)".*\]/) { map_changeset(Regexp.last_match[1]) }
-    str.gsub!(/\[changeset:(\d+)\]/)     { map_changeset(Regexp.last_match[1]) }
+    str.gsub!(/\[changeset:"(\d+).*\]/) { map_changeset(Regexp.last_match[1]) }
+    str.gsub!(/\[changeset:(\d+)\]/) { map_changeset(Regexp.last_match[1]) }
     # Ticket
     str.gsub!(/ticket:(\d+)/, '#\1')
     # set the body as a comment
@@ -362,14 +364,52 @@ end
 
 class Trac
   attr_reader :tickets, :changes, :sessions, :attachments
+
   def initialize(db)
     $logger.info('loading tickets')
-    @db = db
-    @tickets = @db[:ticket]
-    @changes = @db[:ticket_change]
-    @sessions = @db[:session_attribute]
+    @db          = db
+    @tickets     = @db[:ticket]
+    @changes     = @db[:ticket_change]
+    @sessions    = @db[:session_attribute]
     @attachments = @db[:attachment]
   end
+
+  def info
+
+    users = [
+        @db['select distinct reporter from ticket'].map { |r| r[:reporter] },
+        @db['select distinct author from ticket_change'].map { |r| r[:author] },
+        @db["select distinct newvalue from ticket_change where field=\'reporter\'"].map { |r| r[:reporter] },
+        @db['select distinct author   from revision'].map { |r| r[:author] },
+        @db['select distinct author   from report'].map { |r| r[:author] },
+        @db['select distinct author   from attachment'].map { |r| r[:author] }
+    ].flatten.uniq.compact
+
+    milestones  = @db['select distinct milestone   from ticket'].map { |r| r[:milestone] }.compact
+    types       = @db['select distinct type        from ticket'].map { |r| r[:type] }.compact
+    components  = @db['select distinct component   from ticket'].map { |r| r[:component] }.compact
+    resolutions = @db['select distinct resolution  from ticket'].map { |r| r[:resolution] }.compact
+    resolutions = @db['select distinct severity    from ticket'].map { |r| r[:severity] }.compact
+    priorities  = @db['select distinct priority    from ticket'].map { |r| r[:priority] }.compact
+
+    def _mkhash(prefix, array)
+       Hash[array.map { |i| [i, "#{prefix}#{i}"] }]
+    end
+
+    result = {
+        "users"  => _mkhash("", users),
+        "labels" => {
+            "version"    => _mkhash("V_", milestones),
+            "type"       => _mkhash("type_", types),
+            "component"  => _mkhash("component_", components),
+            "resolution" => _mkhash("resolution_", resolutions),
+            "priority"   => _mkhash("priority_", priorities)
+
+        }
+    }
+    puts result.to_yaml
+  end
+
 end
 
 class Options < Hash
@@ -403,11 +443,15 @@ class Options < Hash
               'Import without safety-checking issue numbers.') do |fast|
         self[:fast] = fast
       end
+
       opts.on('-o', '--opened-only', 'Skips the import of closed tickets') do |o|
         self[:openedonly] = o
       end
       opts.on('-v', '--verbose', 'verbose mode') do |v|
         self[:verbose] = v
+      end
+      opts.on('-i', '--info', 'Reports existing labels and users in the database') do |i|
+        self[:info] = i
       end
       begin
         opts.parse!(argv)
@@ -428,11 +472,11 @@ end
 
 if __FILE__ == $0
   opts = Options.new(ARGV)
-  cfg = YAML.load_file(opts[:config])
+  cfg  = YAML.load_file(opts[:config])
 
   # Setup logger.
-  $logger = Logger.new(STDERR)
-  $logger.level = opts[:verbose] ? Logger::DEBUG : Logger::INFO
+  $logger           = Logger.new(STDERR)
+  $logger.level     = opts[:verbose] ? Logger::DEBUG : Logger::INFO
   $logger.formatter = proc do |severity, datetime, progname, msg|
     time = datetime.strftime('%Y-%m-%d %H:%M:%S')
     "[#{time}] #{severity}#{' ' * (5 - severity.size + 1)}| #{msg}\n"

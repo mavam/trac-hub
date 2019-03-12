@@ -110,6 +110,16 @@ are known or can't be used and are thus not stored in the `github` section. As
 soon as you have the login credentials for a user please use the `github`
 `logins` section in the config instead.
 
+You can use 
+
+```
+trac-hub -i 
+```
+
+to produce a yaml file with labels, users, milestones etc. You can copy this into
+the config file and adapt it as required.
+
+
 Dependencies
 ------------
 
