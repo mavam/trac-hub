@@ -38,15 +38,16 @@ class GracefulQuit
 end
 
 class Migrator
-  def initialize(trac, github, users, labels, revmap, attachurl, singlepost, safetychecks)
+  def initialize(trac, github, users, labels, revmap, attachurl, singlepost, safetychecks, mockdeleted = false)
     @trac  = trac
     @repo  = github['repo']
     @token = github["token"]
 
     @users            = Hash[users]
-    @labels = Hash[labels.map { |cat, rx| [cat, Hash[rx] ] }]
+    @labels           = Hash[labels.map { |cat, rx| [cat, Hash[rx]] }]
     @ticket_to_issue  = {}
     @trac_mails_cache = Hash.new
+    @mockdeleted      = mockdeleted
 
     $logger.debug("Get highest in #{@repo}")
     issues              = JSON.parse(RestClient.get(
@@ -70,8 +71,9 @@ class Migrator
   end
 
   def migrate(start_ticket = -1, filterout_closed = false)
+    start_ticket = start_ticket.to_i
     if start_ticket == -1
-      start_ticket = @last_created_issue+1
+      start_ticket = @last_created_issue + 1
     end
     GracefulQuit.enable
     migrate_tickets(start_ticket, filterout_closed)
@@ -99,7 +101,7 @@ class Migrator
 
   # Format time for github API
   def format_time(time)
-    time = Time.at(time/1e6, time%1e6)
+    time = Time.at(time / 1e6, time % 1e6)
     return time.strftime("%FT%TZ")
   end
 
@@ -107,11 +109,35 @@ class Migrator
   def migrate_tickets(start_ticket, filterout_closed)
     $logger.info('migrating issues')
     # We match the issue title to determine whether an issue exists already.
-    @trac.tickets.order(:id).where{id >= start_ticket}.all.each do |ticket|
+    tractickets = @trac.tickets.order(:id).where { id >= start_ticket }.all
+    lasttracid  = tractickets.last[:id]
+
+
+    (start_ticket.to_i .. lasttracid).each do |ticket_id|
+      ticket = tractickets.select { |i| i[:id] == ticket_id }.first
+
+      if ticket.nil?
+        if @mockdeleted
+          ticket = {
+              id:       ticket_id,
+              summary:  "DELETED in trac #{ticket_id}",
+              time:     Time.now.to_i,
+              status:   'closed',
+              reporter: 'trac-hub'
+          }
+        else
+          next
+        end
+      end
+
+      raise ("tickets out of sync #{ticket_id} - #{ticket[:id]}") if ticket[:id] != ticket_id
+
+
       next if filterout_closed and ticket[:status] == "closed"
       GracefulQuit.check("quitting after processing ticket ##{@last_created_issue}")
 
-      if @safetychecks; begin
+      if @safetychecks;
+        begin
           # issue exists already:
           issue = JSON.parse(RestClient.get(
               "https://api.github.com/repos/#{@repo}/issues/#{ticket[:id]}",
@@ -119,10 +145,11 @@ class Migrator
           $logger.info("found ticket #{ticket[:id]}")
           next
         rescue
-      end end
+        end
+      end
 
       begin
-        $logger.info("creating issue #{ticket[:id]} (#{ticket[:reporter]})")
+        $logger.info("creating issue for trac #{ticket[:id]} (#{ticket[:reporter]})")
 
         # API details: https://gist.github.com/jonmagic/5282384165e0f86ef105
         request  = compose_issue(ticket)
@@ -145,11 +172,11 @@ class Migrator
         $logger.info("Status: #{response['status']}")
         issue_id = response["issue_url"].match(/\d+$/).to_s.to_i
 
-        $logger.info("created issue ##{issue_id} for ticket #{ticket[:id]}")
+        $logger.info("created issue ##{issue_id} for trac ticket #{ticket[:id]}")
 
         # assert correct issue number
         if issue_id != ticket[:id]
-          $logger.info("mismatch issue ##{issue_id} for ticket #{ticket[:id]}")
+          $logger.warn("mismatch issue ##{issue_id} for ticket #{ticket[:id]}")
           exit 1
         end
       else
@@ -163,14 +190,14 @@ class Migrator
   def compose_issue(ticket)
 
     body   = ""
-    body += "*Issue migrated from trac ticket # #{ticket[:id]}*\n\n"
+    body   += "*Issue migrated from trac ticket # #{ticket[:id]}* at #{Time.now}\n"
     closed = nil
 
     # summary line:
-    body += [:component, :priority, :resolution, :keywords].map{
-        |cat| ticket[cat] and not ticket[cat].lstrip.empty? and
-              "**#{cat.to_s}:** #{ticket[cat]}"
-    }.select{|x| x}.join(" | ")
+    body += [:id, :component, :priority, :resolution, :keywords].map do |cat|
+      ticket[cat] and not ticket[cat].to_s.lstrip.empty? and
+          "**#{cat.to_s}:** #{ticket[cat]}"
+    end.select { |x| x }.join(" | ")
 
     # Initial report
     # TODO: respect ticket[:changetime]
@@ -187,12 +214,12 @@ class Migrator
     # combine the changes and attachment table results and sort them by date
     changes = @trac.changes.where(:ticket => ticket[:id]).collect.to_a
     changes += @trac.attachments.where(:type => 'ticket', :id => ticket[:id]).collect.to_a
-    changes = changes.sort_by{|x| x[:time]}
+    changes = changes.sort_by { |x| x[:time] }
 
     # replay all changes in chronological order:
-    comments = changes.map{|x| ticket_change(@singlepost, x)}.select{|x| x}.to_a
+    comments = changes.map { |x| ticket_change(@singlepost, x) }.select { |x| x }.to_a
     if @singlepost
-      body += comments.map{|x| x["body"]}.join("\n")
+      body     += comments.map { |x| x["body"] }.join("\n")
       comments = []
     end
 
@@ -218,7 +245,7 @@ class Migrator
     issue = {
         "title"      => ticket[:summary],
         "body"       => body,
-          "labels"     => labels.to_a,
+        "labels"     => labels.to_a,
         "closed"     => ticket[:status] == "closed",
         "created_at" => format_time(ticket[:time]),
     }
@@ -248,7 +275,7 @@ class Migrator
 
     # time
     time = meta[:time]
-    time = Time.at(time/1e6, time%1e6)
+    time = Time.at(time / 1e6, time % 1e6)
 
     # author
     author = meta[:author]
@@ -301,7 +328,7 @@ class Migrator
       else
         text += "`#{name}`"
       end
-        text += " (#{(meta[:size]/1024.0).round(1)} KiB)"
+      text += " (#{(meta[:size] / 1024.0).round(1)} KiB)"
       text += "\n\n" + body
 
     when 'description'
@@ -393,7 +420,7 @@ class Trac
     priorities  = @db['select distinct priority    from ticket'].map { |r| r[:priority] }.compact
 
     def _mkhash(prefix, array)
-       Hash[array.map { |i| [i, "#{prefix}#{i}"] }]
+      Hash[array.map { |i| [i, "#{prefix}#{i}"] }]
     end
 
     result = {
@@ -442,6 +469,10 @@ class Options < Hash
       opts.on('-F', '--fast-import',
               'Import without safety-checking issue numbers.') do |fast|
         self[:fast] = fast
+      end
+      opts.on('-M', '--mockup',
+              'Import from 0 and mocking tickets deleted on trac') do |mockdeleted|
+        self[:mockdeleted] = mockdeleted
       end
 
       opts.on('-o', '--opened-only', 'Skips the import of closed tickets') do |o|
@@ -497,18 +528,24 @@ if __FILE__ == $0
   # and git commit sha1 hashes.
   revmap = nil
   if opts[:revmapfile]
-    File.open(opts[:revmapfile], "r") do |f|
+    File.open(opts[:revmapfile], "r:UTF-8") do |f|
       $logger.info(opts[:revmapfile])
-      revmap = Hash[f.lines
-        .map {|line|    line.split(/\s+/)}
-        .map {|rev,sha| [rev.gsub(/^r/, ''), sha]}  # remove leading "r" if present
+      revmap = Hash[f.each_line
+                        .map { |line| line.split(/\s+\|\s+/) }
+                        .map { |rev, sha| [rev.gsub(/^r/, ''), sha] } # remove leading "r" if present
       ]
     end
   end
 
   trac = Trac.new(db)
+
+  if opts[:info]
+    trac.info
+    exit(0)
+  end
+
   migrator = Migrator.new(
       trac, cfg['github'], cfg['users'], cfg['labels'], revmap,
-      opts[:attachurl], opts[:singlepost], (not opts[:fast]))
+      opts[:attachurl], opts[:singlepost], (not opts[:fast]), opts[:mockdeleted])
   migrator.migrate(opts[:start], opts[:openedonly])
 end

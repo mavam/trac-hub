@@ -73,6 +73,14 @@ match, e.g. because non-trac tickets already exist. In this case, you must
 also specify the ID of the first ticket to be migrated (even if it is 1):
 
     ./trac-hub -F -s 1
+    
+If you start to import in a fresh github project, trac-hub can create
+dummy tickets issue numbers not available in trac. This even works 
+if you want to run it multiple times. In this case you need to provide
+-s for the first id not available in Github.
+
+    ./trac-hub -M    
+    
 
 Technology
 ----------
