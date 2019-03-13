@@ -38,10 +38,25 @@ class GracefulQuit
 end
 
 class Migrator
-  def initialize(trac, github, users, labels, revmap, attachurl, singlepost, safetychecks, mockdeleted = false)
+  def initialize(args)
+    #def initialize(trac, github, users, labels, revmap, attachurl, singlepost, safetychecks, mockdeleted = false)
+    trac         = args[:trac]
+    github       = args[:cfg]['github']
+    users        = args[:cfg]['users']
+    labels       = args[:cfg]['labels']
+    milestones   = args[:cfg]['milestones']
+    revmap       = args['revmap']
+    attachurl    = args[:opts][:attachurl]
+    singlepost   = args[:opts][:singlepost]
+    safetychecks = (not args[:opts][:fast])
+    mockdeleted  = args[:opts][:mockdeleted]
+
+
     @trac  = trac
     @repo  = github['repo']
     @token = github["token"]
+
+    @milestonesfromtrac = milestones
 
     @users            = Hash[users]
     @labels           = Hash[labels.map { |cat, rx| [cat, Hash[rx]] }]
@@ -62,12 +77,51 @@ class Migrator
     ))
     @last_created_issue = issues.empty? ? 0 : issues[0]["number"].to_i
 
-    $logger.info("Last created issue on GitHub is '#{@last_created_issue}'")
+    $logger.info("created issue on GitHub is '#{@last_created_issue}'")
+
+
+    load_milestone_map
+
 
     @revmap       = revmap
     @attachurl    = attachurl
     @singlepost   = singlepost
     @safetychecks = safetychecks
+  end
+
+  def load_milestone_map
+    read_milestones_from_gitub
+
+    newmilestonekeys = @milestonesfromtrac.keys - @milestonemap.keys
+
+    newmilestonekeys.each do |milestonelabel|
+      milestone = {
+          "title" => "#{milestonelabel}",
+          "state" => 'open', #@milestonesfromtrac[milestonelabel][:completed].nil? ? 'open': 'closed',
+          "description" =>  @milestonesfromtrac[milestonelabel][:description] || 'no description in trac',
+          "due_on"=>  "2012-10-09T23:39:01Z"
+      }
+      due = @milestonesfromtrac[milestonelabel][:due]
+      milestone['due_on'] = Time.at(due/1000000).strftime('%Y-%m-%dT%H:%M:%SZ') if due
+
+      $logger.info "creating #{milestone}"
+      response = JSON.parse(RestClient.post(
+          "https://api.github.com/repos/#{@repo}/milestones",
+          milestone.to_json,
+          {"Authorization" => "token #{@token}",
+           "Content-Type"  => "application/json",
+           "Accept"        => "application/vnd.github.golden-comet-preview+json"}))
+    end
+
+    read_milestones_from_gitub
+
+    $logger.info("Last created issue on GitHub is '#{@last_created_issue}'")
+    nil
+  end
+
+
+  def map_user(user)
+    @users[user] || user
   end
 
   def migrate(start_ticket = -1, filterout_closed = false)
@@ -80,6 +134,15 @@ class Migrator
   end
 
   private
+
+  def read_milestones_from_gitub
+    milestonesongithub = JSON.parse(RestClient.get(
+        "https://api.github.com/repos/#{@repo}/milestones?per_page=100",
+        {"Authorization" => "token #{@token}"}
+    ))
+    @milestonemap = Hash[milestonesongithub.map { |i| [i['title'], i['number'],] }]
+    nil
+  end
 
   # returns the author mail if found, otherwise author itself
   def trac_mail(author)
@@ -131,7 +194,6 @@ class Migrator
       end
 
       raise ("tickets out of sync #{ticket_id} - #{ticket[:id]}") if ticket[:id] != ticket_id
-
 
       next if filterout_closed and ticket[:status] == "closed"
       GracefulQuit.check("quitting after processing ticket ##{@last_created_issue}")
@@ -190,14 +252,15 @@ class Migrator
   def compose_issue(ticket)
 
     body   = ""
-    body   += "*Issue migrated from trac ticket # #{ticket[:id]}* at #{Time.now}\n"
     closed = nil
 
     # summary line:
-    body += [:id, :component, :priority, :resolution, :keywords].map do |cat|
-      ticket[cat] and not ticket[cat].to_s.lstrip.empty? and
-          "**#{cat.to_s}:** #{ticket[cat]}"
-    end.select { |x| x }.join(" | ")
+    if false
+      body += [:id, :component, :priority, :resolution, :keywords].map do |cat|
+        ticket[cat] and not ticket[cat].to_s.lstrip.empty? and
+            "**#{cat.to_s}:** #{ticket[cat]}"
+      end.select { |x| x }.join(" | ")
+    end
 
     # Initial report
     # TODO: respect ticket[:changetime]
@@ -206,9 +269,11 @@ class Migrator
         ticket:   ticket[:id],
         time:     ticket[:time],
         author:   ticket[:reporter],
+        assigne:  ticket[:owner],
         field:    :initial,
         oldvalue: nil,
         newvalue: ticket[:description],
+
     })["body"]
 
     # combine the changes and attachment table results and sort them by date
@@ -242,12 +307,18 @@ class Migrator
     # If the field is not set, it will be nil and generate an unprocessable json
     labels.delete(nil)
 
+    milestone =  @milestonemap[ticket[:milestone]]
+
+    body += "\n\n\n>Issue migrated from trac  # #{ticket[:id]} at #{Time.now}\n"
+
     issue = {
         "title"      => ticket[:summary],
         "body"       => body,
         "labels"     => labels.to_a,
+        "assignee"   => map_user(ticket[:owner]),
         "closed"     => ticket[:status] == "closed",
         "created_at" => format_time(ticket[:time]),
+        "milestone"  => milestone
     }
 
     if ticket[:changetime]
@@ -281,7 +352,7 @@ class Migrator
     author = meta[:author]
     author = trac_mail(author)
     if @users.has_key?(author)
-      author = "@" + @users[author]
+      author = "@" + map_user(author)
     end
 
     text = ""
@@ -293,11 +364,22 @@ class Migrator
       old = meta[:oldvalue]
       new = meta[:newvalue]
       if old and new
-        text += "changed #{kind} from *#{old}* to *#{new}*"
+        text += "changed #{kind} from `#{old}` to `#{new}`"
       elsif old
-        text += "removed #{kind} (was *#{old}*)"
+        text += "removed #{kind} (was `#{old}`)"
       elsif new
-        text += "set #{kind} to *#{new}*"
+        text += "set #{kind} to `#{new}`"
+      end
+
+    when 'parents'
+      old = meta[:oldvalue]
+      new = meta[:newvalue]
+      if old and new
+        text += "changed #{kind} from `#{old}` to ##{new}"
+      elsif old
+        text += "removed #{kind} (was `#{old}`)"
+      elsif new
+        text += "set #{kind} to ##{new}"
       end
 
     when :initial
@@ -339,6 +421,10 @@ class Migrator
     when 'keywords', 'cc', 'reporter', 'version'
       # don't care
       return nil
+
+    else
+      # this should not happen
+      text += "made a change not transferred by trac-hub"
     end
 
     return {
@@ -412,11 +498,12 @@ class Trac
         @db['select distinct author   from attachment'].map { |r| r[:author] }
     ].flatten.uniq.compact
 
-    milestones  = @db['select distinct milestone   from ticket'].map { |r| r[:milestone] }.compact
+    milestones  = @db['select name, name, due, completed, description  from milestone'].all.map{|i| [i[:name], i]}
+    binding.pry
     types       = @db['select distinct type        from ticket'].map { |r| r[:type] }.compact
     components  = @db['select distinct component   from ticket'].map { |r| r[:component] }.compact
     resolutions = @db['select distinct resolution  from ticket'].map { |r| r[:resolution] }.compact
-    resolutions = @db['select distinct severity    from ticket'].map { |r| r[:severity] }.compact
+    severity    = @db['select distinct severity    from ticket'].map { |r| r[:severity] }.compact
     priorities  = @db['select distinct priority    from ticket'].map { |r| r[:priority] }.compact
 
     def _mkhash(prefix, array)
@@ -425,11 +512,12 @@ class Trac
 
     result = {
         "users"  => _mkhash("", users),
+        "milestones" => Hash[milestones],
         "labels" => {
-            "version"    => _mkhash("V_", milestones),
             "type"       => _mkhash("type_", types),
             "component"  => _mkhash("component_", components),
             "resolution" => _mkhash("resolution_", resolutions),
+            "severity"   => _mkhash("severity", severity),
             "priority"   => _mkhash("priority_", priorities)
 
         }
@@ -527,9 +615,10 @@ if __FILE__ == $0
   # This revmap file allows to map between SVN revisions (rXXXX)
   # and git commit sha1 hashes.
   revmap = nil
-  if opts[:revmapfile]
-    File.open(opts[:revmapfile], "r:UTF-8") do |f|
-      $logger.info(opts[:revmapfile])
+  revmapfile = opts[:revmapfile] || cfg[:revmapfile]
+  if revmapfile
+    File.open(revmapfile, "r:UTF-8") do |f|
+      $logger.info("loading #{revmapfile}")
       revmap = Hash[f.each_line
                         .map { |line| line.split(/\s+\|\s+/) }
                         .map { |rev, sha| [rev.gsub(/^r/, ''), sha] } # remove leading "r" if present
@@ -544,8 +633,13 @@ if __FILE__ == $0
     exit(0)
   end
 
-  migrator = Migrator.new(
-      trac, cfg['github'], cfg['users'], cfg['labels'], revmap,
-      opts[:attachurl], opts[:singlepost], (not opts[:fast]), opts[:mockdeleted])
+
+  #            trac: trac, opts: opts, cfg: cfg, revmap: revmap
+
+  # migrator = Migrator.new(
+  #     trac, cfg['github'], cfg['users'], cfg['labels'], revmap,
+  #     opts[:attachurl], opts[:singlepost], (not opts[:fast]), opts[:mockdeleted])
+
+  migrator = Migrator.new(trac: trac, opts: opts, cfg: cfg, revmap: revmap)
   migrator.migrate(opts[:start], opts[:openedonly])
 end
