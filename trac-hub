@@ -126,6 +126,9 @@ class Migrator
     @users[user] || user
   end
 
+  def map_assignee(user)
+    @users[user] || "bwl21"
+  end
   def migrate(start_ticket = -1, filterout_closed = false)
     start_ticket = start_ticket.to_i
     if start_ticket == -1
@@ -321,7 +324,7 @@ class Migrator
         "title"      => ticket[:summary],
         "body"       => body,
         "labels"     => labels.to_a,
-        "assignee"   => map_user(ticket[:owner]),
+        "assignee"   => map_assignee(ticket[:owner]),
         "closed"     => ticket[:status] == "closed",
         "created_at" => format_time(ticket[:time]),
         "milestone"  => milestone
