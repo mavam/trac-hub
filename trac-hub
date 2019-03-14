@@ -481,11 +481,15 @@ class Migrator
     str.gsub!(/\br(\d+)\b/) { map_changeset(Regexp.last_match[1]) }
     str.gsub!(/\[changeset:"(\d+)".*\]/) { map_changeset(Regexp.last_match[1]) }
     str.gsub!(/\[changeset:"(\d+).*\]/) { map_changeset(Regexp.last_match[1]) }
-    str.gsub!(/\[changeset:(\d+)\]/) { map_changeset(Regexp.last_match[1]) }
+    str.gsub!(/\[\[Image\(([^\)]+)\)\]\]/) { map_image(Regexp.last_match[1]) }
+
     if @tracticketbaseurl
       baseurlpattern = @tracticketbaseurl.gsub("/", "\\/")
       str.gsub!(/#{baseurlpattern}\/(\d+)/) { "ticket:#{Regexp.last_match[1]}  " }
     end
+    # attachents
+    #str.gsub!(/\[changeset:(\d+)\]/) { map_changeset(Regexp.last_match[1]) }
+
     # Ticket
     str.gsub!(/ticket:(\d+)/, '#\1')
     # set the body as a comment
