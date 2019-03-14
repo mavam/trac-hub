@@ -101,10 +101,10 @@ class Migrator
           "title" => "#{milestonelabel}",
           "state" => 'open', #@milestonesfromtrac[milestonelabel][:completed].nil? ? 'open': 'closed',
           "description" =>  @milestonesfromtrac[milestonelabel][:description] || 'no description in trac',
-          "due_on"=>  "2012-10-09T23:39:01Z"
+          "due_on"      => "2012-10-09T23:39:01Z"
       }
       due = @milestonesfromtrac[milestonelabel][:due]
-      milestone['due_on'] = Time.at(due/1000000).strftime('%Y-%m-%dT%H:%M:%SZ') if due
+      milestone['due_on'] = Time.at(due / 1000000).strftime('%Y-%m-%dT%H:%M:%SZ') if due
 
       $logger.info "creating #{milestone}"
       response = JSON.parse(RestClient.post(
@@ -515,8 +515,7 @@ class Trac
         @db['select distinct author   from attachment'].map { |r| r[:author] }
     ].flatten.uniq.compact
 
-    milestones  = @db['select name, name, due, completed, description  from milestone'].all.map{|i| [i[:name], i]}
-    binding.pry
+    milestones  = @db['select name, name, due, completed, description  from milestone'].all.map { |i| [i[:name], i] }
     types       = @db['select distinct type        from ticket'].map { |r| r[:type] }.compact
     components  = @db['select distinct component   from ticket'].map { |r| r[:component] }.compact
     resolutions = @db['select distinct resolution  from ticket'].map { |r| r[:resolution] }.compact
