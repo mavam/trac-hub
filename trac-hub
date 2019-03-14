@@ -45,12 +45,11 @@ class Migrator
     users        = args[:cfg]['users']
     labels       = args[:cfg]['labels']
     milestones   = args[:cfg]['milestones']
-    revmap       = args['revmap']
+    revmap            = args[:revmap]
     attachurl    = args[:opts][:attachurl]
     singlepost   = args[:opts][:singlepost]
     safetychecks = (not args[:opts][:fast])
     mockdeleted  = args[:opts][:mockdeleted]
-
 
     @trac  = trac
     @repo  = github['repo']
@@ -156,10 +155,14 @@ class Migrator
   # returns the git commit hash for a specified revision (using revmap hash)
   def map_changeset(str)
     if @revmap and @revmap.has_key?(str)
-      return "[r#{str}](../commit/#{@revmap[str]})"
+      return "[r#{str}](../commit/#{@revmap[str]}) #{@revmap[str]}"
     else
       return str
     end
+  end
+
+  def map_image(str)
+    %Q{>>**insert-missing-image: (#{str}**)}
   end
 
   # Format time for github API
@@ -392,7 +395,14 @@ class Migrator
 
     when 'comment'
       body = meta[:newvalue]
+      changeset = body.match(/In \[changeset\:\"(\d+)/).to_a[1]
+      if changeset
+        changesethash = @revmap[changeset]
+        text          += "committed #{map_changeset(changeset)}"
+      else
       text += "commented\n\n"
+      end
+
       text += "\n___\n" if not append
       text += markdownify(body) if body
       return nil if body == nil or body.lstrip.empty?
@@ -424,7 +434,7 @@ class Migrator
 
     else
       # this should not happen
-      text += "made a change not transferred by trac-hub"
+      text += "changed #{kind} which not transferred by trac-hub"
     end
 
     return {
@@ -615,7 +625,7 @@ if __FILE__ == $0
   # This revmap file allows to map between SVN revisions (rXXXX)
   # and git commit sha1 hashes.
   revmap = nil
-  revmapfile = opts[:revmapfile] || cfg[:revmapfile]
+  revmapfile = opts[:revmapfile] || cfg['revmapfile']
   if revmapfile
     File.open(revmapfile, "r:UTF-8") do |f|
       $logger.info("loading #{revmapfile}")
