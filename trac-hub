@@ -548,10 +548,12 @@ class Trac
             "component"  => _mkhash("component_", components),
             "resolution" => _mkhash("resolution_", resolutions),
             "severity"   => _mkhash("severity", severity),
-            "priority"   => _mkhash("priority_", priorities)
-
+            "priority"   => _mkhash("priority_", priorities),
+            "tracstate"  => _mkhash('tracstate_', tracstates)
         }
     }
+
+    # here we use puts (not logger) as we redirect the ymal fo a file
     puts result.to_yaml
   end
 
