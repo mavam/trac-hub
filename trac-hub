@@ -50,6 +50,7 @@ class Migrator
     singlepost   = args[:opts][:singlepost]
     safetychecks = (not args[:opts][:fast])
     mockdeleted  = args[:opts][:mockdeleted]
+    tracticketbaseurl = args[:cfg]['trac']['ticketbaseurl']
 
     @trac  = trac
     @repo  = github['repo']
@@ -58,10 +59,12 @@ class Migrator
     @milestonesfromtrac = milestones
 
     @users            = Hash[users]
-    @labels           = Hash[labels.map { |cat, rx| [cat, Hash[rx]] }]
+
+    @labels_cfg        = Hash[labels.map { |cat, rx| [cat, Hash[rx]] }]
     @ticket_to_issue  = {}
     @trac_mails_cache = Hash.new
     @mockdeleted      = mockdeleted
+    @tracticketbaseurl = tracticketbaseurl
 
     $logger.debug("Get highest in #{@repo}")
     issues              = JSON.parse(RestClient.get(
@@ -476,6 +479,10 @@ class Migrator
     str.gsub!(/\[changeset:"(\d+)".*\]/) { map_changeset(Regexp.last_match[1]) }
     str.gsub!(/\[changeset:"(\d+).*\]/) { map_changeset(Regexp.last_match[1]) }
     str.gsub!(/\[changeset:(\d+)\]/) { map_changeset(Regexp.last_match[1]) }
+    if @tracticketbaseurl
+      baseurlpattern = @tracticketbaseurl.gsub("/", "\\/")
+      str.gsub!(/#{baseurlpattern}\/(\d+)/) { "ticket:#{Regexp.last_match[1]}  " }
+    end
     # Ticket
     str.gsub!(/ticket:(\d+)/, '#\1')
     # set the body as a comment
