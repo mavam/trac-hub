@@ -40,16 +40,16 @@ end
 class Migrator
   def initialize(args)
     #def initialize(trac, github, users, labels, revmap, attachurl, singlepost, safetychecks, mockdeleted = false)
-    trac         = args[:trac]
-    github       = args[:cfg]['github']
-    users        = args[:cfg]['users']
-    labels       = args[:cfg]['labels']
-    milestones   = args[:cfg]['milestones']
+    trac              = args[:trac]
+    github            = args[:cfg]['github']
+    users             = args[:cfg]['users']
+    labels            = args[:cfg]['labels']
+    milestones        = args[:cfg]['milestones']
     revmap            = args[:revmap]
-    attachurl    = args[:opts][:attachurl]
-    singlepost   = args[:opts][:singlepost]
-    safetychecks = (not args[:opts][:fast])
-    mockdeleted  = args[:opts][:mockdeleted]
+    attachurl         = args[:opts][:attachurl]
+    singlepost        = args[:opts][:singlepost]
+    safetychecks      = (not args[:opts][:fast])
+    mockdeleted       = args[:opts][:mockdeleted]
     tracticketbaseurl = args[:cfg]['trac']['ticketbaseurl']
 
     @trac  = trac
@@ -58,12 +58,12 @@ class Migrator
 
     @milestonesfromtrac = milestones
 
-    @users            = Hash[users]
+    @users = Hash[users]
 
     @labels_cfg        = Hash[labels.map { |cat, rx| [cat, Hash[rx]] }]
-    @ticket_to_issue  = {}
-    @trac_mails_cache = Hash.new
-    @mockdeleted      = mockdeleted
+    @ticket_to_issue   = {}
+    @trac_mails_cache  = Hash.new
+    @mockdeleted       = mockdeleted
     @tracticketbaseurl = tracticketbaseurl
 
     $logger.debug("Get highest in #{@repo}")
@@ -96,13 +96,13 @@ class Migrator
     newmilestonekeys = @milestonesfromtrac.keys - @milestonemap.keys
 
     newmilestonekeys.each do |milestonelabel|
-      milestone = {
+      milestone           = {
           "title" => "#{milestonelabel}",
           "state" => 'open', #@milestonesfromtrac[milestonelabel][:completed].nil? ? 'open': 'closed',
-          "description" =>  @milestonesfromtrac[milestonelabel][:description] || 'no description in trac',
+          "description" => @milestonesfromtrac[milestonelabel][:description] || 'no description in trac',
           "due_on"      => "2012-10-09T23:39:01Z"
       }
-      due = @milestonesfromtrac[milestonelabel][:due]
+      due                 = @milestonesfromtrac[milestonelabel][:due]
       milestone['due_on'] = Time.at(due / 1000000).strftime('%Y-%m-%dT%H:%M:%SZ') if due
 
       $logger.info "creating #{milestone}"
@@ -145,7 +145,7 @@ class Migrator
         "https://api.github.com/repos/#{@repo}/milestones?per_page=100",
         {"Authorization" => "token #{@token}"}
     ))
-    @milestonemap = Hash[milestonesongithub.map { |i| [i['title'], i['number'],] }]
+    @milestonemap      = Hash[milestonesongithub.map { |i| [i['title'], i['number'],] }]
     nil
   end
 
@@ -183,7 +183,7 @@ class Migrator
     # We match the issue title to determine whether an issue exists already.
     tractickets = @trac.tickets.order(:id).where { id >= start_ticket }.all
     begin
-    lasttracid  = tractickets.last[:id]
+      lasttracid = tractickets.last[:id]
     rescue
       raise ("trac has no ticket #{start_ticket}")
     end
@@ -272,7 +272,7 @@ class Migrator
 
     # summary line:
     if false
-      body += [:id, :component, :priority, :resolution, :keywords].map do |cat|
+      body += [:id, :component, :priority, :resolution].map do |cat|
         ticket[cat] and not ticket[cat].to_s.lstrip.empty? and
             "**#{cat.to_s}:** #{ticket[cat]}"
       end.select { |x| x }.join(" | ")
@@ -306,26 +306,52 @@ class Migrator
 
     labels = Set[]
     changes.each do |x|
-      del = @labels.fetch(x[:field], Hash[])[x[:oldvalue]]
-      add = @labels.fetch(x[:field], Hash[])[x[:newvalue]]
+      del = @labels_cfg.fetch(x[:field], Hash[])[x[:oldvalue]]
+      add = @labels_cfg.fetch(x[:field], Hash[])[x[:newvalue]]
       labels.delete(del) if del
-      labels.add(add) if add
+#      labels.add(add) if add
       if x[:field] == "status" and x[:newvalue] == "closed"
         closed = x[:time]
       end
     end
-    labels.add(@labels.fetch('component', Hash[])[ticket[:component]])
-    labels.add(@labels.fetch('type', Hash[])[ticket[:type]])
-    labels.add(@labels.fetch('resolution', Hash[])[ticket[:resolution]])
-    labels.add(@labels.fetch('priority', Hash[])[ticket[:priority]])
-    labels.add(@labels.fetch('severity', Hash[])[ticket[:severity]])
-    labels.add(@labels.fetch('version', Hash[])[ticket[:version]])
-    # If the field is not set, it will be nil and generate an unprocessable json
+
+
+    # we separate labels from badges
+    # labels: are changed frequently in the lifecycle of a ticket, therefore are transferred to github lables
+    # badges: are basically fixed  and are transferred to a metadata table in the ticket
+
+    badges = Set[]
+
+    badges.add(@labels_cfg.fetch('component', Hash[])[ticket[:component]])
+    badges.add(@labels_cfg.fetch('type', Hash[])[ticket[:type]])
+    badges.add(@labels_cfg.fetch('resolution', Hash[])[ticket[:resolution]])
+    badges.add(@labels_cfg.fetch('version', Hash[])[ticket[:version]])
+
+    labels.add(@labels_cfg.fetch('severity', Hash[])[ticket[:severity]])
+    labels.add(@labels_cfg.fetch('priority', Hash[])[ticket[:priority]])
+    labels.add(@labels_cfg.fetch('tracstate', Hash[])[ticket[:status]])
     labels.delete(nil)
 
-    milestone =  @milestonemap[ticket[:milestone]]
+    if ticket[:keywords].downcase === "discuss"
+      labels.add(@labels_cfg.fetch('keywords', Hash[])[ticket[:keywords].downcase])
+    else
+      badges.add(@labels_cfg.fetch('keywords', Hash[])[ticket[:keywords]])
+    end
+    # If the field is not set, it will be nil and generate an unprocessable json
 
-    body += "\n\n\n>Issue migrated from trac  # #{ticket[:id]} at #{Time.now}\n"
+    milestone = @milestonemap[ticket[:milestone]]
+
+    # compute footer
+    footer = "Issue migrated from trac:#{ticket[:id]} at #{Time.now}"
+
+    # compute badgetabe
+    badges     = badges.to_a.compact.sort
+    badgetable = badges.join(" | ")
+    badgetable += "\n" + badges.map { |i| "---" }.join("|")
+
+
+    # compose body
+    body = [badgetable, body, footer].join("\n\n___\n")
 
     issue = {
         "title"      => ticket[:summary],
@@ -407,13 +433,13 @@ class Migrator
       end
 
     when 'comment'
-      body = meta[:newvalue]
+      body      = meta[:newvalue]
       changeset = body.match(/In \[changeset\:\"(\d+)/).to_a[1]
       if changeset
         changesethash = @revmap[changeset]
         text          += "committed #{map_changeset(changeset)}"
       else
-      text += "commented\n\n"
+        text += "commented\n\n"
       end
 
       text += "\n___\n" if not append
@@ -522,6 +548,7 @@ class Trac
 
     users = [
         @db['select distinct reporter from ticket'].map { |r| r[:reporter] },
+        @db['select distinct owner from ticket'].map { |r| r[:owner] },
         @db['select distinct author from ticket_change'].map { |r| r[:author] },
         @db["select distinct newvalue from ticket_change where field=\'reporter\'"].map { |r| r[:reporter] },
         @db['select distinct author   from revision'].map { |r| r[:author] },
@@ -535,15 +562,16 @@ class Trac
     resolutions = @db['select distinct resolution  from ticket'].map { |r| r[:resolution] }.compact
     severity    = @db['select distinct severity    from ticket'].map { |r| r[:severity] }.compact
     priorities  = @db['select distinct priority    from ticket'].map { |r| r[:priority] }.compact
+    tracstates  = @db['select distinct status      from ticket'].map { |r| r[:status] }.compact
 
     def _mkhash(prefix, array)
       Hash[array.map { |i| [i, "#{prefix}#{i}"] }]
     end
 
     result = {
-        "users"  => _mkhash("", users),
+        "users"      => _mkhash("", users),
         "milestones" => Hash[milestones],
-        "labels" => {
+        "labels"     => {
             "type"       => _mkhash("type_", types),
             "component"  => _mkhash("component_", components),
             "resolution" => _mkhash("resolution_", resolutions),
@@ -646,7 +674,7 @@ if __FILE__ == $0
   # load revision mapping file and convert it to a hash.
   # This revmap file allows to map between SVN revisions (rXXXX)
   # and git commit sha1 hashes.
-  revmap = nil
+  revmap     = nil
   revmapfile = opts[:revmapfile] || cfg['revmapfile']
   if revmapfile
     File.open(revmapfile, "r:UTF-8") do |f|
