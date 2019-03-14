@@ -30,7 +30,7 @@ class GracefulQuit
   def self.check(message = "Quitting")
     if self.instance.breaker
       yield if block_given?
-      puts message
+      $log.info message
       exit
     end
   end
@@ -79,11 +79,10 @@ class Migrator
     ))
     @last_created_issue = issues.empty? ? 0 : issues[0]["number"].to_i
 
-    $logger.info("created issue on GitHub is '#{@last_created_issue}'")
+    $logger.info("created issue on GitHub is '#{@last_created_issue}' #{issues.count}")
 
 
     load_milestone_map
-
 
     @revmap       = revmap
     @attachurl    = attachurl
@@ -129,6 +128,7 @@ class Migrator
   def map_assignee(user)
     @users[user] || "bwl21"
   end
+
   def migrate(start_ticket = -1, filterout_closed = false)
     start_ticket = start_ticket.to_i
     if start_ticket == -1
@@ -182,7 +182,11 @@ class Migrator
     $logger.info('migrating issues')
     # We match the issue title to determine whether an issue exists already.
     tractickets = @trac.tickets.order(:id).where { id >= start_ticket }.all
+    begin
     lasttracid  = tractickets.last[:id]
+    rescue
+      raise ("trac has no ticket #{start_ticket}")
+    end
 
 
     (start_ticket.to_i .. lasttracid).each do |ticket_id|
@@ -220,8 +224,7 @@ class Migrator
       end
 
       begin
-        $logger.info("creating issue for trac #{ticket[:id]} (#{ticket[:reporter]})")
-
+        $logger.info(%Q{creating issue for trac #{ticket[:id]} "#{ticket[:summary]}" (#{ticket[:reporter]})})
         # API details: https://gist.github.com/jonmagic/5282384165e0f86ef105
         request  = compose_issue(ticket)
         response = JSON.parse(RestClient.post(
@@ -232,15 +235,19 @@ class Migrator
              "Accept"        => "application/vnd.github.golden-comet-preview+json"}))
       end
 
-      if @safetychecks
+
+      if true #@safetychecks  - it is not really faster if we do not wait for the processing
         while response["status"] == "pending"
-          sleep 0.1
+          sleep 1
           $logger.info("Checking import status: #{response['id']}")
           response = JSON.parse(RestClient.get(response['url'], {
               "Authorization" => "token #{@token}",
               "Accept"        => "application/vnd.github.golden-comet-preview+json"}))
         end
         $logger.info("Status: #{response['status']}")
+        if response['status'] == 'failed'
+          $loggger.error(response['errors'])
+        end
         issue_id = response["issue_url"].match(/\d+$/).to_s.to_i
 
         $logger.info("created issue ##{issue_id} for trac ticket #{ticket[:id]}")
