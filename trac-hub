@@ -46,7 +46,7 @@ class Migrator
     labels            = args[:cfg]['labels']
     milestones        = args[:cfg]['milestones']
     revmap            = args[:revmap]
-    attachurl         = args[:opts][:attachurl]
+    attachurl         = args[:opts][:attachurl] || args[:cfg].dig("attachments", "url")
     singlepost        = args[:opts][:singlepost]
     safetychecks      = (not args[:opts][:fast])
     mockdeleted       = args[:opts][:mockdeleted]
@@ -84,10 +84,17 @@ class Migrator
 
     load_milestone_map
 
-    @revmap       = revmap
-    @attachurl    = attachurl
-    @singlepost   = singlepost
-    @safetychecks = safetychecks
+    load_subtickets
+
+    @revmap          = revmap
+    @attachurl       = attachurl
+    @singlepost      = singlepost
+    @safetychecks    = safetychecks
+  end
+
+  def load_subtickets
+    @subtickets    = @trac.subtickets.all.group_by { |i| i[:parent] }
+    @parenttickets = @trac.subtickets.all.group_by { |i| i[:child] }
   end
 
   def load_milestone_map
@@ -168,7 +175,8 @@ class Migrator
   end
 
   def map_image(str)
-    %Q{>>**insert-missing-image: (#{str}**)}
+    %Q{![#{str}](#{@attachurl}/#{@current_ticket_id}/#{str}) }
+    #%Q{>>**insert-missing-image: (#{str}**)}
   end
 
   # Format time for github API
@@ -191,6 +199,8 @@ class Migrator
 
     (start_ticket.to_i .. lasttracid).each do |ticket_id|
       ticket = tractickets.select { |i| i[:id] == ticket_id }.first
+
+      @current_ticket_id = ticket_id  # used to build filename for attachments
 
       if ticket.nil?
         if @mockdeleted
@@ -349,6 +359,13 @@ class Migrator
     badgetable = badges.join(" | ")
     badgetable += "\n" + badges.map { |i| "---" }.join("|")
 
+    # compute subtickets
+
+    parenttickets = @parenttickets[ticket[:id]]
+    badgetable += "\n\n**Parenttickets**: " + parenttickets.map{|i| "##{i[:parent]}"}.join(", ") if parenttickets
+
+    subtickets = @subtickets[ticket[:id]]
+    badgetable += "\n\n**Subtickets**: " + subtickets.map{|i| "##{i[:child]}"}.join(", ") if subtickets
 
     # compose body
     body = [badgetable, body, footer].join("\n\n___\n")
@@ -514,14 +531,15 @@ class Migrator
     str.gsub!(/\br(\d+)\b/) { map_changeset(Regexp.last_match[1]) }
     str.gsub!(/\[changeset:"(\d+)".*\]/) { map_changeset(Regexp.last_match[1]) }
     str.gsub!(/\[changeset:"(\d+).*\]/) { map_changeset(Regexp.last_match[1]) }
+
+    # image reference
     str.gsub!(/\[\[Image\(([^\)]+)\)\]\]/) { map_image(Regexp.last_match[1]) }
 
+    # replace a full ticket id with the github short refrence
     if @tracticketbaseurl
       baseurlpattern = @tracticketbaseurl.gsub("/", "\\/")
       str.gsub!(/#{baseurlpattern}\/(\d+)/) { "ticket:#{Regexp.last_match[1]}  " }
     end
-    # attachents
-    #str.gsub!(/\[changeset:(\d+)\]/) { map_changeset(Regexp.last_match[1]) }
 
     # Ticket
     str.gsub!(/ticket:(\d+)/, '#\1')
@@ -533,15 +551,38 @@ class Migrator
 end
 
 class Trac
-  attr_reader :tickets, :changes, :sessions, :attachments
+  attr_reader :tickets, :changes, :sessions, :attachments, :subtickets
 
   def initialize(db)
     $logger.info('loading tickets')
     @db          = db
     @tickets     = @db[:ticket]
+    @subtickets  = @db[:subtickets]
     @changes     = @db[:ticket_change]
     @sessions    = @db[:session_attribute]
     @attachments = @db[:attachment]
+  end
+
+
+  # produce an shell script to be invoked
+  # within the tracd container to export the attachmets
+  def generate_attachment_exporter(cfg)
+    outfile = cfg.dig("attachments", "export_script")
+    outfolder = cfg.dig("attachments", "export_folder")
+
+    raise("mising attachements/export_script entry in configuration") unless outfile
+    raise("mising attachements/export_folder entry in configuration") unless outfolder
+
+    attachments = @db['select id, filename from attachment where type="ticket"']
+    exportcommads = attachments.map do |attachment|
+      %Q{mkdir -p #{outfolder}/#{attachment[:id]}
+      trac-admin /trac attachment export ticket:#{attachment[:id]} '#{attachment[:filename]}' > '#{outfolder}/#{attachment[:id]}/#{attachment[:filename]}'}
+    end
+
+    File.open(outfile, "w") do |f|
+      f.puts ("mkdir -p #{outfolder}")
+      f.puts (exportcommads.join("\n"))
+    end
   end
 
   def info
@@ -623,6 +664,11 @@ class Options < Hash
         self[:mockdeleted] = mockdeleted
       end
 
+      opts.on('-A', '--attachment-exporter',
+              'Generate an attachment exporter script according to config.yaml') do |attachmentexporter|
+        self[:attachmentexporter] = attachmentexporter
+      end
+
       opts.on('-o', '--opened-only', 'Skips the import of closed tickets') do |o|
         self[:openedonly] = o
       end
@@ -693,6 +739,15 @@ if __FILE__ == $0
     exit(0)
   end
 
+  if opts[:attachmentexporter]
+    begin
+      trac.generate_attachment_exporter(cfg)
+    rescue StandardError => e
+      $logger.error(e.message)
+      exit(1)
+    end
+    exit(0)
+  end
 
   #            trac: trac, opts: opts, cfg: cfg, revmap: revmap
 

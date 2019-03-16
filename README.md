@@ -42,6 +42,13 @@ If you want all trac comments/changes to be compiled into a single post on the
 github issue:
 
     ./trac-hub -S
+    
+If you migrate to a bare github, you might want want to ensure that the ticket
+ids do not change. In this case you can create dummy tikcets forids missing in 
+trac (because they were deleted). The process might interrupt, so you can still
+specify the first number to transfer.
+
+    /trac-hub -M -s 601  
 
 *Note*: when converting your trac setup to github, it is prudent to first try
 the migration into a test repository which you can delete afterwards. If this
@@ -118,6 +125,25 @@ are known or can't be used and are thus not stored in the `github` section. As
 soon as you have the login credentials for a user please use the `github`
 `logins` section in the config instead.
 
+The section `milestones` containes a mapping of milestones as it is generated
+by trac-hub -i
+
+The secion `attachments` specifies how you want to grab attachments. In particular
+the attachment_uri supports the case that the imagename is embedded in the uri:
+
+The imagename is built of ticket_id and image filename. `exportfolder` ist the
+folder where the images will be downloaded to on the trac system.
+
+```yaml
+
+attachments:
+  attachment_uri: https://gitlab.com/mynamespace/myrepo/raw/master/from_trac/#imagename#?inline=false
+  export_folder: ./attachments
+  export_script: attachments.sh
+```
+
+https://gitlab.com/pjtadmin/pjtadmin_attach/raw/develop/from_trac/233/screenshot_183.jpg
+https://gitlab.com/pjtadmin/pjtadmin_attach/raw/develop/from_trac/233/screenshot_183.jpg
 You can use 
 
 ```
@@ -126,6 +152,9 @@ trac-hub -i
 
 to produce a yaml file with labels, users, milestones etc. You can copy this into
 the config file and adapt it as required.
+
+it also produces a shell script which in invokes trac-admin to download the attachments
+from trac.
 
 
 Dependencies
