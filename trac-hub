@@ -86,10 +86,10 @@ class Migrator
 
     load_subtickets
 
-    @revmap          = revmap
-    @attachurl       = attachurl
-    @singlepost      = singlepost
-    @safetychecks    = safetychecks
+    @revmap       = revmap
+    @attachurl    = attachurl
+    @singlepost   = singlepost
+    @safetychecks = safetychecks
   end
 
   def load_subtickets
@@ -200,7 +200,7 @@ class Migrator
     (start_ticket.to_i .. lasttracid).each do |ticket_id|
       ticket = tractickets.select { |i| i[:id] == ticket_id }.first
 
-      @current_ticket_id = ticket_id  # used to build filename for attachments
+      @current_ticket_id = ticket_id # used to build filename for attachments
 
       if ticket.nil?
         if @mockdeleted
@@ -250,6 +250,7 @@ class Migrator
         while response["status"] == "pending"
           sleep 1
           $logger.info("Checking import status: #{response['id']}")
+          $logger.info("you can manually check: #{response['url']}")
           response = JSON.parse(RestClient.get(response['url'], {
               "Authorization" => "token #{@token}",
               "Accept"        => "application/vnd.github.golden-comet-preview+json"}))
@@ -342,10 +343,13 @@ class Migrator
     labels.add(@labels_cfg.fetch('tracstate', Hash[])[ticket[:status]])
     labels.delete(nil)
 
-    if ticket[:keywords].downcase === "discuss"
-      labels.add(@labels_cfg.fetch('keywords', Hash[])[ticket[:keywords].downcase])
-    else
-      badges.add(@labels_cfg.fetch('keywords', Hash[])[ticket[:keywords]])
+    keywords = ticket[:keywords]
+    if keywords
+      if ticket[:keywords].downcase === "discuss"
+        labels.add(@labels_cfg.fetch('keywords', Hash[])[ticket[:keywords].downcase])
+      else
+        badges.add(@labels_cfg.fetch('keywords', Hash[])[ticket[:keywords]])
+      end
     end
     # If the field is not set, it will be nil and generate an unprocessable json
 
@@ -355,17 +359,19 @@ class Migrator
     footer = "Issue migrated from trac:#{ticket[:id]} at #{Time.now}"
 
     # compute badgetabe
+    #
+
     badges     = badges.to_a.compact.sort
-    badgetable = badges.join(" | ")
-    badgetable += "\n" + badges.map { |i| "---" }.join("|")
+    badgetable = badges.map { |i| %Q{`#{i}`} }.join(" ")
+    badgetable += "   |    by " + trac_mail(changes.first[:author]) rescue "deleted Ticket"
 
     # compute subtickets
 
     parenttickets = @parenttickets[ticket[:id]]
-    badgetable += "\n\n**Parenttickets**: " + parenttickets.map{|i| "##{i[:parent]}"}.join(", ") if parenttickets
+    badgetable    += "\n\n**Parenttickets**: " + parenttickets.map { |i| "##{i[:parent]}" }.join(", ") if parenttickets
 
     subtickets = @subtickets[ticket[:id]]
-    badgetable += "\n\n**Subtickets**: " + subtickets.map{|i| "##{i[:child]}"}.join(", ") if subtickets
+    badgetable += "\n\n**Subtickets**: " + subtickets.map { |i| "##{i[:child]}" }.join(", ") if subtickets
 
     # compose body
     body = [badgetable, body, footer].join("\n\n___\n")
@@ -381,10 +387,10 @@ class Migrator
     }
 
     if ticket[:changetime]
-      issue["updated_at"] = format_time(ticket[:changetime])
+      # issue["updated_at"] = format_time(ticket[:changetime])
     end
     if issue["closed"] and closed
-      issue["closed_at"] = format_time(closed)
+      #  issue["closed_at"] = format_time(closed)
     end
 
     return {
@@ -415,8 +421,11 @@ class Migrator
     end
 
     text = ""
-    text += "\n___\n" if append
-    text += "#### #{time.strftime("%Y-%m-%d %H:%M:%S")}: #{author} "
+
+    unless kind === :initial
+      text += "\n___\n" if false #append
+      text += "#{author} "
+    end
 
     case kind
     when 'owner', 'status', 'title', 'resolution', 'priority', 'component', 'type', 'severity', 'platform'
@@ -443,9 +452,9 @@ class Migrator
 
     when :initial
       body = meta[:newvalue]
-      text += "created the issue\n\n"
+      # text += "created the issue\n\n"
       if body and not body.lstrip.empty?
-        text += "\n___\n" if not append
+        #text += "\n___\n" if not append
         text += markdownify(body)
       end
 
@@ -567,13 +576,13 @@ class Trac
   # produce an shell script to be invoked
   # within the tracd container to export the attachmets
   def generate_attachment_exporter(cfg)
-    outfile = cfg.dig("attachments", "export_script")
+    outfile   = cfg.dig("attachments", "export_script")
     outfolder = cfg.dig("attachments", "export_folder")
 
     raise("mising attachements/export_script entry in configuration") unless outfile
     raise("mising attachements/export_folder entry in configuration") unless outfolder
 
-    attachments = @db['select id, filename from attachment where type="ticket"']
+    attachments   = @db['select id, filename from attachment where type="ticket"']
     exportcommads = attachments.map do |attachment|
       %Q{mkdir -p #{outfolder}/#{attachment[:id]}
       trac-admin /trac attachment export ticket:#{attachment[:id]} '#{attachment[:filename]}' > '#{outfolder}/#{attachment[:id]}/#{attachment[:filename]}'}
