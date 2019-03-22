@@ -11,5 +11,9 @@ RUN bundle config --global frozen 1
 
 COPY . .
 
-ENTRYPOINT cd /usr/src/myapp/trac-hub && bash
+WORKDIR /usr/src/myapp/trac-hub
+
+ENTRYPOINT ./trac-hub
+CMD -h
+
 

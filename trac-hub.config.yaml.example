@@ -1,10 +1,14 @@
 trac:
   database: sqlite://db/trac.db
   # database: mysql2://user:password@host:port/database
+  # database: mysql2://root:password@mysql:3306/foobar
+  ticketbaseurl: https://foo.bar/trac/foobar/ticket
 
 github:
   repo: 'mavam/test'
   token: '49b1c8d34401abc06040cf64bf9a8bfed5f30ca9'
+
+revmapfile: ../foobar-revmap.txt
 
 users:
   matthias: mavam
@@ -39,3 +43,17 @@ labels:
   version:
     '1.3':              v1.3
     '1.4':              v1.4
+
+milestones:
+  '2014_02':
+    :name: '2014_02'
+    :due: 1392595200000000
+    :completed: 1415959156000000
+    :description: ''
+
+attachments:
+  url: "https://gitlab.com/foobar/foobar_attach/raw/develop/from_trac"
+  # export-folder is relative to export-script
+  export_folder: "./attachments"
+  export_script: .//attachments.sh
+

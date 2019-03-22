@@ -104,8 +104,8 @@ class Migrator
 
     newmilestonekeys.each do |milestonelabel|
       milestone           = {
-          "title" => "#{milestonelabel}",
-          "state" => 'open', #@milestonesfromtrac[milestonelabel][:completed].nil? ? 'open': 'closed',
+          "title"       => "#{milestonelabel}",
+          "state"       => @milestonesfromtrac[milestonelabel][:completed].nil? ? 'open' : 'closed',
           "description" => @milestonesfromtrac[milestonelabel][:description] || 'no description in trac',
           "due_on"      => "2012-10-09T23:39:01Z"
       }
@@ -133,7 +133,7 @@ class Migrator
   end
 
   def map_assignee(user)
-    @users[user] || "bwl21"
+    @users[user]
   end
 
   def migrate(start_ticket = -1, filterout_closed = false)
@@ -150,9 +150,14 @@ class Migrator
   def read_milestones_from_gitub
     milestonesongithub = JSON.parse(RestClient.get(
         "https://api.github.com/repos/#{@repo}/milestones?per_page=100",
-        {"Authorization" => "token #{@token}"}
+        {"Authorization" => "token #{@token}",
+         params:         {
+             state:     "all",
+             sort:      "due_on",
+             direction: "desc",
+         }}
     ))
-    @milestonemap      = Hash[milestonesongithub.map { |i| [i['title'], i['number'],] }]
+    @milestonemap = Hash[milestonesongithub.map { |i| [i['title'], i['number'],] }]
     nil
   end
 
@@ -257,8 +262,10 @@ class Migrator
         end
         $logger.info("Status: #{response['status']}")
         if response['status'] == 'failed'
-          $loggger.error(response['errors'])
+          $logger.error(response['errors'])
+          exit 1
         end
+
         issue_id = response["issue_url"].match(/\d+$/).to_s.to_i
 
         $logger.info("created issue ##{issue_id} for trac ticket #{ticket[:id]}")
@@ -358,12 +365,16 @@ class Migrator
     # compute footer
     footer = "Issue migrated from trac:#{ticket[:id]} at #{Time.now}"
 
+
     # compute badgetabe
     #
+
+    github_assignee = map_assignee(ticket[:owner])
 
     badges     = badges.to_a.compact.sort
     badgetable = badges.map { |i| %Q{`#{i}`} }.join(" ")
     badgetable += "   |    by " + trac_mail(changes.first[:author]) rescue "deleted Ticket"
+    #badgetable += "   |   **->#{ticket[:owner]}**"  # note that from github to gitlab we loose the assigne
 
     # compute subtickets
 
@@ -376,15 +387,20 @@ class Migrator
     # compose body
     body = [badgetable, body, footer].join("\n\n___\n")
 
-    issue = {
+    labels.add("owner:#{github_assignee}")
+
+
+    issue             = {
         "title"      => ticket[:summary],
         "body"       => body,
         "labels"     => labels.to_a,
-        "assignee"   => map_assignee(ticket[:owner]),
         "closed"     => ticket[:status] == "closed",
         "created_at" => format_time(ticket[:time]),
         "milestone"  => milestone
     }
+
+    ### as the assignee stuff is pretty fragile, we do not assign at all
+    # issue['assignee'] = github_assignee if github_assignee
 
     if ticket[:changetime]
       # issue["updated_at"] = format_time(ticket[:changetime])
@@ -428,7 +444,7 @@ class Migrator
     end
 
     case kind
-    when 'owner', 'status', 'title', 'resolution', 'priority', 'component', 'type', 'severity', 'platform'
+    when 'owner', 'status', 'title', 'resolution', 'priority', 'component', 'type', 'severity', 'platform', 'milestone'
       old = meta[:oldvalue]
       new = meta[:newvalue]
       if old and new
@@ -592,6 +608,8 @@ class Trac
       f.puts ("mkdir -p #{outfolder}")
       f.puts (exportcommads.join("\n"))
     end
+
+    $logger.info "created attachment exporter in #{outfile}"
   end
 
   def info
@@ -690,8 +708,11 @@ class Options < Hash
       begin
         opts.parse!(argv)
         if not self[:config]
-          default = File.join(File.dirname(__FILE__), 'config.yaml')
-          raise 'missing configuration file' unless File.exists?(default)
+          configfiles = ['../trac-hub.config.yaml', 'trac-hub.config.yaml']
+          default = configfiles.map do |f|
+            File.join(File.dirname(__FILE__), f)
+          end.select{|f|File.exists?(f)}.first
+          raise "missing configuration file (one of #{configfiles})" unless default
           self[:config] = default
         end
         self[:start] = -1 unless self[:start]
@@ -733,7 +754,7 @@ if __FILE__ == $0
   revmapfile = opts[:revmapfile] || cfg['revmapfile']
   if revmapfile
     File.open(revmapfile, "r:UTF-8") do |f|
-      $logger.info("loading #{revmapfile}")
+      $logger.info("loading revision map #{revmapfile}")
       revmap = Hash[f.each_line
                         .map { |line| line.split(/\s+\|\s+/) }
                         .map { |rev, sha| [rev.gsub(/^r/, ''), sha] } # remove leading "r" if present
