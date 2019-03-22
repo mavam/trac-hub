@@ -1,6 +1,6 @@
 This is a fork of https://github.com/mavam/trac-hub.git whre I collect
 the changes I have made in order to migrate my projects from trac via
-github to gitlab. 
+github to gitlab.
 
 Major changes are
 
@@ -95,6 +95,23 @@ Major changes are
 17. If something goes wrong, restart the the converter
 
     `docker-compose run --rm trac-hub --M -s <next free id>`
+
+## Bonus :-)
+
+You can run a trac-instance - without svn - but to inspect details by
+
+    `deocker-compose up tracd`
+
+you can run a gitlab-instance
+
+    'docker-compose up gitlab` 
+
+I managed to import the converted github project in to this local
+instance for testing purpoes
+
+## future
+
+May be we can add direct gitlab support to trac-hub
 
 # trac-hub
 
