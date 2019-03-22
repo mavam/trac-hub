@@ -19,7 +19,7 @@ section AUTHORS
     $MYSQL -e "select distinct author   from wiki;"                 | tail -n+2
     $MYSQL -e "select distinct author   from revision;"             | tail -n+2
     $MYSQL -e "select distinct author   from report;"               | tail -n+2
-    $MYSQL -e "select distinct author   from attachment;"           | tail -n+2
+        $MYSQL -e "select distinct author   from attachment;"           | tail -n+2
 ) | sort -u
 
 

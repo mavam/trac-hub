@@ -1,3 +1,4 @@
+.idea/*rm
 config.yaml
 *.sw[op]
 .bundle
