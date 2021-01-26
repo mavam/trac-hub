@@ -221,7 +221,7 @@ class Migrator
       "closed" => ticket[:status] == "closed",
       "created_at" => format_time(ticket[:time]),
     }
-    if @users.has_key?(owner)
+    if @users.has_key?(ticket[:owner])
       owner = trac_mail(ticket[:owner])
       github_owner = @users[owner]
       $logger.debug("..owner in trac: #{owner}")
