@@ -214,34 +214,19 @@ class Migrator
     # If the field is not set, it will be nil and generate an unprocessable json
     labels.delete(nil)
 
-    # trac owner / assignee info and mapping to github user
-    owner = ticket[:owner]
-    owner = trac_mail(owner)
-    $logger.debug("..owner in trac: #{owner}")
+    issue = {
+      "title" => ticket[:summary],
+      "body" => body,
+      "labels" => labels.to_a,
+      "closed" => ticket[:status] == "closed",
+      "created_at" => format_time(ticket[:time]),
+    }
     if @users.has_key?(owner)
-      githubOwner = @users[owner]
-    end
-    $logger.debug("..assignee in GitHub: #{githubOwner}")
-    
-    if githubOwner
-      # create w/ assignee
-      issue = {
-        "title" => ticket[:summary],
-        "body" => body,
-        "labels" => labels.to_a,
-        "assignee" => githubOwner,
-        "closed" => ticket[:status] == "closed",
-        "created_at" => format_time(ticket[:time]),
-      }
-    else
-      # create w/o assignee
-      issue = {
-        "title" => ticket[:summary],
-        "body" => body,
-        "labels" => labels.to_a,
-        "closed" => ticket[:status] == "closed",
-        "created_at" => format_time(ticket[:time]),
-      }
+      owner = trac_mail(ticket[:owner])
+      github_owner = @users[owner]
+      $logger.debug("..owner in trac: #{owner}")
+      $logger.debug("..assignee in GitHub: #{github_owner}")
+      issue["assignee"] = github_owner
     end
 
     if ticket[:changetime]
