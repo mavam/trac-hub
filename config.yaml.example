@@ -6,6 +6,7 @@ github:
   repo: 'mavam/test'
   token: '49b1c8d34401abc06040cf64bf9a8bfed5f30ca9'
 
+# make sure not to typo the GitHub username as the issue will fail to create if a ticket's owner (assignee) has a valid mapping below
 users:
   matthias: mavam
   vallenti: mavam
