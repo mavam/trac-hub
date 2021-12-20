@@ -361,9 +361,6 @@ class Migrator
     str.gsub!(/\[changeset:(\d+)\]/)     { map_changeset(Regexp.last_match[1]) }
     # Ticket
     str.gsub!(/ticket:(\d+)/, '#\1')
-    # set the body as a comment
-    str.gsub!("\n", "\n> ")
-    str = "> #{str}"
     return str
   end
 end
