@@ -10,6 +10,7 @@ require 'yaml'
 require 'set'
 require 'singleton'
 require 'uri'
+require 'digest/sha1'
 
 class GracefulQuit
   include Singleton
@@ -300,7 +301,11 @@ class Migrator
         name = meta[:filename]
         body = meta[:description]
         if @attachurl
-          url = URI.escape("#{@attachurl}/#{meta[:id]}/#{name}")
+          hash_dir = Digest::SHA1.hexdigest("#{meta[:id]}")
+          hash_par = hash_dir[0,3]
+          hash_file = Digest::SHA1.hexdigest("#{name}")
+          file_suff = File.extname(name)
+          url="#{@attachurl}/#{hash_par}/#{hash_dir}/#{hash_file}#{file_suff}"
           text += "[`#{name}`](#{url})"
           if [".png", ".jpg", ".gif"].include? File.extname(name).downcase
             body += "\n![#{name}](#{url})"
