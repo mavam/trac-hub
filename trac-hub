@@ -50,16 +50,21 @@ class Migrator
     @trac_mails_cache = Hash.new
 
     $logger.debug("Get highest in #{@repo}")
-    issues = JSON.parse(RestClient.get(
-        "https://api.github.com/repos/#{@repo}/issues",
-        {"Authorization" => "token #{@token}",
-         params: {
-            filter: "all",
-            state: "all",
-            sort: "created",
-            direction: "desc",
-        }}
-    ))
+    begin
+      issues = JSON.parse(RestClient.get(
+          "https://api.github.com/repos/#{@repo}/issues",
+          {"Authorization" => "token #{@token}",
+           params: {
+              filter: "all",
+              state: "all",
+              sort: "created",
+              direction: "desc",
+          }}
+      ))
+    rescue RestClient::ExceptionWithResponse => e
+      $logger.info("#{e.response}")
+      raise
+    end
     @last_created_issue = issues.empty? ? 0 : issues[0]["number"].to_i
 
     $logger.info("Last created issue on GitHub is '#{@last_created_issue}'")
@@ -133,6 +138,9 @@ class Migrator
           {"Authorization" => "token #{@token}",
            "Content-Type" => "application/json",
            "Accept" => "application/vnd.github.golden-comet-preview+json"}))
+      rescue => e
+        $logger.info("#{e.response}")
+        raise
       end
 
       if @safetychecks
@@ -142,6 +150,9 @@ class Migrator
           response = JSON.parse(RestClient.get(response['url'], {
             "Authorization" => "token #{@token}",
             "Accept" => "application/vnd.github.golden-comet-preview+json"}))
+        end
+        if response["status"] == "failed"
+          $logger.info("#{response}")
         end
         $logger.info("Status: #{response['status']}")
         issue_id = response["issue_url"].match(/\d+$/).to_s.to_i
