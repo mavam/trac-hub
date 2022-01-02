@@ -47,7 +47,7 @@ class Migrator
     @users = Hash[users]
     @labels = Hash[labels.map { |cat, rx| [cat, Hash[rx] ] }]
     @ticket_to_issue = {}
-    @trac_mails_cache = Hash.new
+    @trac_user_to_github_cache = Hash.new
 
     $logger.debug("Get highest in #{@repo}")
     begin
@@ -85,13 +85,29 @@ class Migrator
 
   private
 
-  # returns the author mail if found, otherwise author itself
-  def trac_mail(author)
-    return @trac_mails_cache[author] if @trac_mails_cache.has_key?(author)
-    # tries to retrieve the email from trac db
-    data = @trac.sessions.select(:value).where(name: "email", sid: author)
-    return (@trac_mails_cache[author] = data.first[:value]) if data.count == 1
-    return (@trac_mails_cache[author] = author) # not found
+  # returns the GitHub user name prefixed with "@" if a mapping for this user
+  # is found in "users" or the string containing user name and obfuscated
+  # email otherwise
+  def trac_user_to_github(user)
+    return @trac_user_to_github_cache[user] if @trac_user_to_github_cache.has_key?(user)
+
+    # check for known users first
+    if @users.has_key?(user)
+      github_user = '@' + @users[user]
+    else
+      # tries to retrieve the email from trac db
+      data = @trac.sessions.select(:value).where(name: "email", sid: user)
+      if data.count == 1
+        email = data.first[:value]
+        email.sub!('@', '-at-')
+        email.sub!('.', '-dot-')
+        github_user = "#{user} (#{email})"
+      else
+        github_user = user
+      end
+    end
+
+    return (@trac_user_to_github_cache[user] = github_user) # not found
   end
 
   # returns the git commit hash for a specified revision (using revmap hash)
@@ -234,12 +250,15 @@ class Migrator
       "closed" => ticket[:status] == "closed",
       "created_at" => format_time(ticket[:time]),
     }
-    if @users.has_key?(ticket[:owner])
-      owner = trac_mail(ticket[:owner])
-      github_owner = @users[owner]
+    owner = ticket[:owner]
+    if owner != nil
       $logger.debug("..owner in trac: #{owner}")
-      $logger.debug("..assignee in GitHub: #{github_owner}")
-      issue["assignee"] = github_owner
+      owner = trac_user_to_github(owner)
+      if owner.start_with?("@")
+        github_owner = owner.delete_prefix("@")
+        $logger.debug("..assignee in GitHub: #{github_owner}")
+        issue["assignee"] = github_owner
+      end
     end
 
     if ticket[:changetime]
@@ -270,11 +289,7 @@ class Migrator
     time = Time.at(time/1e6, time%1e6)
 
     # author
-    author = meta[:author]
-    author = trac_mail(author)
-    if @users.has_key?(author)
-      author = "@" + @users[author]
-    end
+    author = trac_user_to_github(meta[:author])
 
     text = ""
     text += "\n___\n" if append
