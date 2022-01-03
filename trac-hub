@@ -228,10 +228,32 @@ class Migrator
     changes = changes.sort_by{|x| x[:time]}
 
     # replay all changes in chronological order:
-    comments = changes.map{|x| ticket_change(@singlepost, x)}.select{|x| x}.to_a
-    if @singlepost
-      body += comments.map{|x| x["body"]}.join("\n")
-      comments = []
+    comments = []
+    last_change_time = nil
+    changes.each do |x|
+      # combine changes from a single change into a single comment if we're
+      # combining everything anyhow or if this change was done at the same
+      # moment as the previous one
+      if @singlepost
+        body += "\n___\n\n"
+        append = true
+      else
+        append = x[:time] == last_change_time
+      end
+
+      comment = ticket_change(append, x)
+      next if not comment
+
+      if @singlepost
+        body += comment["body"]
+      else
+        if append and not comments.empty?
+          comments[-1]["body"] += "\n" + comment["body"]
+        else
+          comments << comment
+        end
+        last_change_time = x[:time]
+      end
     end
 
     labels = Set[]
@@ -301,9 +323,7 @@ class Migrator
     # author
     author = trac_user_to_github(meta[:author])
 
-    text = ""
-    text += "\n___\n" if append
-    text += "#### #{time.strftime("%Y-%m-%d %H:%M:%S")}: #{author} "
+    text = "#### #{time.strftime("%Y-%m-%d %H:%M:%S")}: #{author} "
 
     case kind
       when 'status', 'title', 'resolution', 'priority', 'component', 'type', 'severity', 'platform'
