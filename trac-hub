@@ -400,6 +400,7 @@ class Migrator
     str.gsub!(/\br(\d+)\b/)              { map_changeset(Regexp.last_match[1]) }
     str.gsub!(/\[changeset:"(\d+)".*\]/) { map_changeset(Regexp.last_match[1]) }
     str.gsub!(/\[changeset:(\d+)\]/)     { map_changeset(Regexp.last_match[1]) }
+    str.gsub!(/\[changeset:"([0-9a-f]{40})\/[^\]]+\]/, '\1')
     # Ticket
     str.gsub!(/ticket:(\d+)/, '#\1')
     return str
