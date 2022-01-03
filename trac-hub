@@ -306,7 +306,7 @@ class Migrator
     text += "#### #{time.strftime("%Y-%m-%d %H:%M:%S")}: #{author} "
 
     case kind
-      when 'owner', 'status', 'title', 'resolution', 'priority', 'component', 'type', 'severity', 'platform'
+      when 'status', 'title', 'resolution', 'priority', 'component', 'type', 'severity', 'platform'
         old = meta[:oldvalue]
         new = meta[:newvalue]
         if old and new
