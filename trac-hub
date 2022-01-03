@@ -357,7 +357,7 @@ class Migrator
         # so there is no need to update)
         text += "edited the issue description"
 
-      when 'keywords', 'cc', 'reporter', 'version'
+      else
         # don't care
         return nil
     end
