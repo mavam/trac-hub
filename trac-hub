@@ -39,7 +39,7 @@ class GracefulQuit
 end
 
 class Migrator
-  def initialize(trac, github, users, labels, revmap, attachurl, singlepost, safetychecks)
+  def initialize(trac, github, users, labels, revmap, attachurl, singlepost, safetychecks, dryrun)
     @trac = trac
     @repo = github['repo']
     @token = github["token"]
@@ -73,6 +73,11 @@ class Migrator
     @attachurl = attachurl
     @singlepost = singlepost
     @safetychecks = safetychecks
+    @dryrun = dryrun
+
+    if @dryrun
+      @safetychecks = false
+    end
   end
 
   def migrate(start_ticket = -1, filterout_closed = false)
@@ -148,6 +153,11 @@ class Migrator
 
         # API details: https://gist.github.com/jonmagic/5282384165e0f86ef105
         request = compose_issue(ticket)
+        if @dryrun
+          $logger.debug("would have posted #{request.to_json}")
+          next
+        end
+
         response = JSON.parse(RestClient.post(
           "https://api.github.com/repos/#{@repo}/import/issues",
           request.to_json,
@@ -439,6 +449,10 @@ class Options < Hash
               'Import without safety-checking issue numbers.') do |fast|
         self[:fast] = fast
       end
+      opts.on('-n', '--dry-run',
+              'Skip really creating tickets, just pretend doing it.') do |dryrun|
+        self[:dryrun] = dryrun
+      end
       opts.on('-o', '--opened-only', 'Skips the import of closed tickets') do |o|
         self[:openedonly] = o
       end
@@ -501,6 +515,6 @@ if __FILE__ == $0
   trac = Trac.new(db)
   migrator = Migrator.new(
       trac, cfg['github'], cfg['users'], cfg['labels'], revmap,
-      opts[:attachurl], opts[:singlepost], (not opts[:fast]))
+      opts[:attachurl], opts[:singlepost], (not opts[:fast]), opts[:dryrun])
   migrator.migrate(opts[:start], opts[:openedonly])
 end
