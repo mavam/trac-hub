@@ -100,13 +100,10 @@ class Migrator
     if @users.has_key?(user)
       github_user = '@' + @users[user]
     else
-      # tries to retrieve the email from trac db
-      data = @trac.sessions.select(:value).where(name: "email", sid: user)
+      # try to retrieve the name from trac db
+      data = @trac.sessions.select(:value).where(name: "name", sid: user)
       if data.count == 1
-        email = data.first[:value]
-        email.sub!('@', '-at-')
-        email.sub!('.', '-dot-')
-        github_user = "#{user} (#{email})"
+        github_user = "#{user} (#{data.first[:value]})"
       else
         github_user = user
       end
