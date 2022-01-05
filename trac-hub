@@ -102,7 +102,7 @@ class Migrator
     else
       # try to retrieve the name from trac db
       data = @trac.sessions.select(:value).where(name: "name", sid: user)
-      if data.count == 1
+      if data.count == 1 and not data.first[:value].empty?
         github_user = "#{user} (#{data.first[:value]})"
       else
         github_user = user
