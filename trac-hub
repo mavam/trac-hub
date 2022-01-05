@@ -171,7 +171,7 @@ class Migrator
 
       if @safetychecks
         while response["status"] == "pending"
-          sleep 0.1
+          sleep 1.8
           $logger.info("Checking import status: #{response['id']}")
           response = JSON.parse(RestClient.get(response['url'], {
             "Authorization" => "token #{@token}",
