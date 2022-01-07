@@ -39,13 +39,14 @@ class GracefulQuit
 end
 
 class Migrator
-  def initialize(trac, github, users, labels, revmap, attachurl, singlepost, safetychecks, dryrun, skipassignee)
+  def initialize(trac, github, users, labels, milestones, revmap, attachurl, singlepost, safetychecks, dryrun, skipassignee)
     @trac = trac
     @repo = github['repo']
     @token = github["token"]
 
     @users = Hash[users]
     @labels = Hash[labels.map { |cat, rx| [cat, Hash[rx] ] }]
+    @milestones = milestones
     @ticket_to_issue = {}
     @trac_user_to_github_cache = Hash.new
 
@@ -294,6 +295,10 @@ class Migrator
       end
     end
 
+    if @milestones.has_key?(ticket[:milestone])
+      issue["milestone"] = @milestones[ticket[:milestone]]
+    end
+
     if ticket[:changetime]
       issue["updated_at"] = format_time(ticket[:changetime])
     end
@@ -540,7 +545,8 @@ if __FILE__ == $0
 
   trac = Trac.new(db)
   migrator = Migrator.new(
-      trac, cfg['github'], cfg['users'], cfg['labels'], revmap,
+      trac, cfg['github'], cfg['users'], cfg['labels'], cfg['milestones'],
+      revmap,
       opts[:attachurl], opts[:singlepost], (not opts[:fast]),
       opts[:dryrun], opts[:skipassignee])
   migrator.migrate(opts[:start], opts[:openedonly])
