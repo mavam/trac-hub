@@ -39,7 +39,7 @@ class GracefulQuit
 end
 
 class Migrator
-  def initialize(trac, github, users, labels, revmap, attachurl, singlepost, safetychecks, dryrun)
+  def initialize(trac, github, users, labels, revmap, attachurl, singlepost, safetychecks, dryrun, skipassignee)
     @trac = trac
     @repo = github['repo']
     @token = github["token"]
@@ -74,6 +74,7 @@ class Migrator
     @singlepost = singlepost
     @safetychecks = safetychecks
     @dryrun = dryrun
+    @skipassignee = skipassignee
 
     if @dryrun
       @safetychecks = false
@@ -279,14 +280,17 @@ class Migrator
       "closed" => ticket[:status] == "closed",
       "created_at" => format_time(ticket[:time]),
     }
-    owner = ticket[:owner]
-    if owner != nil
-      $logger.debug("..owner in trac: #{owner}")
-      owner = trac_user_to_github(owner)
-      if owner.start_with?("@")
-        github_owner = owner.delete_prefix("@")
-        $logger.debug("..assignee in GitHub: #{github_owner}")
-        issue["assignee"] = github_owner
+
+    if not @skipassignee
+      owner = ticket[:owner]
+      if owner != nil
+        $logger.debug("..owner in trac: #{owner}")
+        owner = trac_user_to_github(owner)
+        if owner.start_with?("@")
+          github_owner = owner.delete_prefix("@")
+          $logger.debug("..assignee in GitHub: #{github_owner}")
+          issue["assignee"] = github_owner
+        end
       end
     end
 
@@ -455,6 +459,10 @@ class Options < Hash
               'allows to specify a commit revision mapping FILE') do |file|
         self[:revmapfile] = file
       end
+      opts.on('-A', '--skip-assignee',
+              'Skip assigning tickets, even if user mapping is found') do |skipassignee|
+        self[:skipassignee] = skipassignee
+      end
       opts.on('-a', '--attachment-url URL',
               'if attachment files are reachable via a URL we reference this here') do |url|
         self[:attachurl] = url
@@ -533,6 +541,7 @@ if __FILE__ == $0
   trac = Trac.new(db)
   migrator = Migrator.new(
       trac, cfg['github'], cfg['users'], cfg['labels'], revmap,
-      opts[:attachurl], opts[:singlepost], (not opts[:fast]), opts[:dryrun])
+      opts[:attachurl], opts[:singlepost], (not opts[:fast]),
+      opts[:dryrun], opts[:skipassignee])
   migrator.migrate(opts[:start], opts[:openedonly])
 end
