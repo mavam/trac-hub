@@ -82,12 +82,12 @@ class Migrator
     end
   end
 
-  def migrate(start_ticket = -1, filterout_closed = false)
+  def migrate(start_ticket = -1, end_ticket = -1, filterout_closed = false)
     if start_ticket == -1
       start_ticket = @last_created_issue+1
     end
     GracefulQuit.enable
-    migrate_tickets(start_ticket, filterout_closed)
+    migrate_tickets(start_ticket, end_ticket.to_i, filterout_closed)
   end
 
   private
@@ -130,10 +130,11 @@ class Migrator
   end
 
   # Creates github issues for trac tickets.
-  def migrate_tickets(start_ticket, filterout_closed)
+  def migrate_tickets(start_ticket, end_ticket, filterout_closed)
     $logger.info('migrating issues')
     # We match the issue title to determine whether an issue exists already.
     @trac.tickets.order(:id).where{id >= start_ticket}.all.each do |ticket|
+      break if end_ticket != -1 and ticket[:id] > end_ticket
       next if filterout_closed and ticket[:status] == "closed"
       GracefulQuit.check("quitting after processing ticket ##{@last_created_issue}")
 
@@ -460,6 +461,9 @@ class Options < Hash
       opts.on('-s', '--start-at ID', 'start migration from ticket with number <ID>') do |id|
         self[:start] = id
       end
+      opts.on('-e', '--stop-at ID', 'stop migration at ticket with number <ID>') do |id|
+        self[:end] = id
+      end
       opts.on('-r', '--rev-map-file FILE',
               'allows to specify a commit revision mapping FILE') do |file|
         self[:revmapfile] = file
@@ -498,6 +502,7 @@ class Options < Hash
           self[:config] = default
         end
         self[:start] = -1 unless self[:start]
+        self[:end] = -1 unless self[:end]
       rescue => e
         STDERR.puts(e)
         STDERR.puts('run with -h to see available options')
@@ -549,5 +554,5 @@ if __FILE__ == $0
       revmap,
       opts[:attachurl], opts[:singlepost], (not opts[:fast]),
       opts[:dryrun], opts[:skipassignee])
-  migrator.migrate(opts[:start], opts[:openedonly])
+  migrator.migrate(opts[:start], opts[:end], opts[:openedonly])
 end
