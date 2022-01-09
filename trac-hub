@@ -272,6 +272,14 @@ class Migrator
     labels.add(@labels.fetch('priority', Hash[])[ticket[:priority]])
     labels.add(@labels.fetch('severity', Hash[])[ticket[:severity]])
     labels.add(@labels.fetch('version', Hash[])[ticket[:version]])
+
+    if ticket[:keywords]
+      keywords = @labels.fetch('keywords', Hash[])
+      ticket[:keywords].split(/[,;]? +/).each do |kw|
+        labels.add(keywords[kw])
+      end
+    end
+
     # If the field is not set, it will be nil and generate an unprocessable json
     labels.delete(nil)
 
