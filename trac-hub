@@ -267,6 +267,7 @@ class Migrator
       end
     end
     labels.add(@labels.fetch('component', Hash[])[ticket[:component]])
+    labels.add(@labels.fetch('status', Hash[])[ticket[:status]])
     labels.add(@labels.fetch('type', Hash[])[ticket[:type]])
     labels.add(@labels.fetch('resolution', Hash[])[ticket[:resolution]])
     labels.add(@labels.fetch('priority', Hash[])[ticket[:priority]])
