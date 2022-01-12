@@ -39,7 +39,7 @@ class GracefulQuit
 end
 
 class Migrator
-  def initialize(trac, github, users, labels, milestones, revmap, attachurl, singlepost, safetychecks, dryrun, skipassignee)
+  def initialize(trac, github, users, labels, milestones, revmap, attachurl, singlepost, safetychecks, dryrun, skipassignee, ticketoffset)
     @trac = trac
     @repo = github['repo']
     @token = github["token"]
@@ -76,6 +76,7 @@ class Migrator
     @safetychecks = safetychecks
     @dryrun = dryrun
     @skipassignee = skipassignee
+    @ticketoffset = ticketoffset
 
     if @dryrun
       @safetychecks = false
@@ -138,7 +139,7 @@ class Migrator
       next if filterout_closed and ticket[:status] == "closed"
       GracefulQuit.check("quitting after processing ticket ##{@last_created_issue}")
 
-      if @safetychecks; begin
+      if @safetychecks and not @ticketoffset; begin
         # issue exists already:
         issue = JSON.parse(RestClient.get(
             "https://api.github.com/repos/#{@repo}/issues/#{ticket[:id]}",
@@ -186,7 +187,7 @@ class Migrator
         $logger.info("created issue ##{issue_id} for ticket #{ticket[:id]}")
 
         # assert correct issue number
-        if issue_id != ticket[:id]
+        if issue_id != ticket[:id] + @ticketoffset
           $logger.info("mismatch issue ##{issue_id} for ticket #{ticket[:id]}")
           exit 1
         end
@@ -473,6 +474,10 @@ class Options < Hash
       opts.on('-e', '--stop-at ID', 'stop migration at ticket with number <ID>') do |id|
         self[:end] = id
       end
+      opts.on('-O', '--ticket-offset OFFSET',
+              'Use the given offset when checking ticket number') do |ticketoffset|
+        self[:ticketoffset] = ticketoffset.to_i
+      end
       opts.on('-r', '--rev-map-file FILE',
               'allows to specify a commit revision mapping FILE') do |file|
         self[:revmapfile] = file
@@ -562,6 +567,6 @@ if __FILE__ == $0
       trac, cfg['github'], cfg['users'], cfg['labels'], cfg['milestones'],
       revmap,
       opts[:attachurl], opts[:singlepost], (not opts[:fast]),
-      opts[:dryrun], opts[:skipassignee])
+      opts[:dryrun], opts[:skipassignee], opts[:ticketoffset])
   migrator.migrate(opts[:start], opts[:end], opts[:openedonly])
 end
